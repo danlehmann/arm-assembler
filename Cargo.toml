@@ -1,0 +1,11 @@
+[package]
+name = "arm-assembler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitbybit = "2.0"
+arbitrary-int = "2.1"
+
+[dev-dependencies]
+tempfile = "3"
