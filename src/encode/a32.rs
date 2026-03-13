@@ -338,6 +338,178 @@ impl MulLong {
     }
 }
 
+/// Media multiply instructions (SMMUL, SMMLA, SMMLS, SMUAD, SMUSD, SMLAD, SMLSD, USAD8, etc.)
+/// cond op1[27:20] Rd Ra Rm op2[7:4] Rn
+#[bitfield(u32)]
+struct MediaMul {
+    #[bits(0..=3, rw)]
+    rn: u4,
+    #[bits(4..=7, rw)]
+    op2: u4,
+    #[bits(8..=11, rw)]
+    rm: u4,
+    #[bits(12..=15, rw)]
+    ra: u4,
+    #[bits(16..=19, rw)]
+    rd: u4,
+    #[bits(20..=27, rw)]
+    op1: u8,
+    #[bits(28..=31, rw)]
+    cond: Condition,
+}
+
+/// Halfword multiply (SMULxy, SMLAxy, SMULWy, SMLAWy)
+/// cond op[27:20] Rd Rn/Ra Rs/Rm 1 y x 0 Rm/Rn
+#[bitfield(u32)]
+struct HalfMul {
+    #[bits(0..=3, rw)]
+    rm: u4,
+    // bit 4: 0
+    #[bit(5, rw)]
+    x: bool,
+    #[bit(6, rw)]
+    y: bool,
+    #[bit(7, rw)]
+    fixed7: bool, // always 1
+    #[bits(8..=11, rw)]
+    rs: u4,
+    #[bits(12..=15, rw)]
+    ra: u4,
+    #[bits(16..=19, rw)]
+    rd: u4,
+    #[bits(20..=27, rw)]
+    op: u8,
+    #[bits(28..=31, rw)]
+    cond: Condition,
+}
+
+impl HalfMul {
+    fn new() -> Self {
+        Self::ZERO.with_fixed7(true)
+    }
+}
+
+/// SWP / SWPB
+/// cond 0001 0B00 Rn Rt 0000 1001 Rm
+#[bitfield(u32)]
+struct Swp {
+    #[bits(0..=3, rw)]
+    rm: u4,
+    #[bits(4..=7, rw)]
+    fixed_low: u4, // 1001
+    // bits 8-11: 0000
+    #[bits(12..=15, rw)]
+    rt: u4,
+    #[bits(16..=19, rw)]
+    rn: u4,
+    // bit 20: 0
+    // bit 21: 0
+    #[bit(22, rw)]
+    byte: bool,
+    #[bits(23..=27, rw)]
+    fixed_hi: u5, // 00010
+    #[bits(28..=31, rw)]
+    cond: Condition,
+}
+
+impl Swp {
+    fn new() -> Self {
+        Self::ZERO
+            .with_fixed_low(u4::new(0b1001))
+            .with_fixed_hi(u5::new(0b00010))
+    }
+}
+
+/// Preload data/instruction (PLD, PLDW, PLI)
+/// 1111 01 I D U R 01 Rn 1111 offset12
+#[bitfield(u32)]
+struct Preload {
+    #[bits(0..=11, rw)]
+    offset12: u12,
+    #[bits(12..=15, rw)]
+    fixed_f: u4, // 1111
+    #[bits(16..=19, rw)]
+    rn: u4,
+    #[bit(20, rw)]
+    fixed_1: bool, // 1
+    #[bit(21, rw)]
+    is_write: bool, // 0=read/PLD, 1=write/PLDW... actually inverted
+    #[bit(22, rw)]
+    is_data: bool, // 1=data (PLD/PLDW), 0=instruction (PLI)
+    #[bit(23, rw)]
+    add: bool,
+    #[bit(24, rw)]
+    is_pld: bool, // 1 for PLD/PLDW, 0 for PLI ... combined with bit 22
+    #[bit(25, rw)]
+    reg_offset: bool, // I bit: 0=immediate, 1=register
+    #[bits(26..=31, rw)]
+    fixed_hi: u6, // 111101
+}
+
+impl Preload {
+    fn pld() -> Self {
+        Self::ZERO
+            .with_fixed_f(u4::new(0xF))
+            .with_fixed_1(true)
+            .with_is_data(true)
+            .with_is_pld(true)
+            .with_fixed_hi(u6::new(0b111101))
+    }
+
+    fn pldw() -> Self {
+        Self::ZERO
+            .with_fixed_f(u4::new(0xF))
+            .with_fixed_1(true)
+            .with_is_pld(true)
+            .with_fixed_hi(u6::new(0b111101))
+    }
+
+    fn pli() -> Self {
+        Self::ZERO
+            .with_fixed_f(u4::new(0xF))
+            .with_fixed_1(true)
+            .with_is_pld(false)
+            .with_is_data(true)
+            .with_fixed_hi(u6::new(0b111101))
+    }
+}
+
+/// Saturation 16-bit (SSAT16, USAT16)
+/// cond 0110 1x10 sat_imm Rd 1111 0011 Rn
+#[bitfield(u32)]
+struct Sat16 {
+    #[bits(0..=3, rw)]
+    rn: u4,
+    #[bits(4..=7, rw)]
+    fixed_low: u4, // 0011
+    #[bits(8..=11, rw)]
+    fixed_f: u4, // 1111
+    #[bits(12..=15, rw)]
+    rd: u4,
+    #[bits(16..=19, rw)]
+    sat_imm: u4,
+    #[bits(20..=27, rw)]
+    op: u8,
+    #[bits(28..=31, rw)]
+    cond: Condition,
+}
+
+impl Sat16 {
+    fn ssat16() -> Self {
+        Self::ZERO
+            .with_fixed_low(u4::new(0b0011))
+            .with_fixed_f(u4::new(0xF))
+            .with_op(0x6A) // 0110 1010
+    }
+
+    fn usat16() -> Self {
+        Self::ZERO
+            .with_fixed_low(u4::new(0b0011))
+            .with_fixed_f(u4::new(0xF))
+            .with_op(0x6E) // 0110 1110
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Encoding entry point
 // ---------------------------------------------------------------------------
@@ -370,6 +542,7 @@ pub fn encode_a32(
         Mla => encode_mla_a32(inst),
         Mls => encode_mls_a32(inst),
         Smull | Umull | Smlal | Umlal => encode_long_mul_a32(inst),
+        Umaal => encode_umaal_a32(inst),
         Sdiv | Udiv => encode_div_a32(inst),
         Clz => encode_clz_a32(inst),
         Rbit => encode_rbit_a32(inst),
@@ -382,22 +555,28 @@ pub fn encode_a32(
         Rev | Rev16 | Revsh => encode_rev_a32(inst),
         Ldrex => encode_ldrex_a32(inst),
         Strex => encode_strex_a32(inst),
-        Ldrexb | Ldrexh => encode_ldrex_bhd_a32(inst),
-        Strexb | Strexh => encode_strex_bhd_a32(inst),
+        Ldrexb | Ldrexh | Ldrexd => encode_ldrex_bhd_a32(inst),
+        Strexb | Strexh | Strexd => encode_strex_bhd_a32(inst),
         Clrex => Ok(emit32(0xF57FF01F)),
         Mrs => encode_mrs_a32(inst),
         Msr => encode_msr_a32(inst),
         Ssat => encode_ssat_a32(inst),
         Usat => encode_usat_a32(inst),
+        Ssat16 => encode_ssat16_a32(inst),
+        Usat16 => encode_usat16_a32(inst),
         Qadd | Qdadd | Qsub | Qdsub => encode_sat_arith_a32(inst),
         Pkhbt | Pkhtb => encode_pkh_a32(inst),
         Sel => encode_sel_a32(inst),
         Smulbb | Smulbt | Smultb | Smultt => encode_smulxy_a32(inst),
+        Smulwb | Smulwt => encode_smulwy_a32(inst),
         Smlabb | Smlabt | Smlatb | Smlatt => encode_smlaxy_a32(inst),
+        Smlawb | Smlawt => encode_smlawy_a32(inst),
         Smlalbb | Smlalbt | Smlaltb | Smlaltt => encode_smlalxy_a32(inst),
-        Smmul | Smmla | Smmls => encode_smmul_a32(inst),
-        Smuad | Smusd | Smlad | Smlsd => encode_smuad_a32(inst),
-        Smlald | Smlsld => encode_smlald_a32(inst),
+        Smmul | Smmulr | Smmla | Smmlar | Smmls | Smmlsr => encode_smmul_a32(inst),
+        Smuad | Smuadx | Smusd | Smusdx | Smlad | Smladx | Smlsd | Smlsdx => {
+            encode_smuad_a32(inst)
+        }
+        Smlald | Smlaldx | Smlsld | Smlsldx => encode_smlald_a32(inst),
         Usad8 | Usada8 => encode_usad8_a32(inst),
         Sadd16 | Sadd8 | Ssub16 | Ssub8 | Uadd16 | Uadd8 | Usub16 | Usub8 | Qadd16 | Qadd8
         | Qsub16 | Qsub8 | Shadd16 | Shadd8 | Shsub16 | Shsub8 | Uhadd16 | Uhadd8 | Uhsub16
@@ -441,15 +620,19 @@ pub fn encode_a32(
         Ldrsbt => encode_ldrh_unpriv_a32(inst, true, false),
         Ldrsht => encode_ldrh_unpriv_a32(inst, true, true),
         Pld => encode_pld_a32(inst),
+        Pldw => encode_pldw_a32(inst),
         Pli => encode_pli_a32(inst),
+        Swp | Swpb => encode_swp_a32(inst),
         Cpsie | Cpsid => encode_cps_a32(inst),
+        Setend => encode_setend_a32(inst),
         Dbg => encode_dbg_a32(inst),
         Dmb => encode_barrier_a32(inst, 0xF57FF050),
         Dsb => encode_barrier_a32(inst, 0xF57FF040),
         Isb => encode_barrier_a32(inst, 0xF57FF060),
-        Wfi => Ok(emit32(0x0320F003 | (cond_bits(inst) << 28))),
-        Wfe => Ok(emit32(0x0320F002 | (cond_bits(inst) << 28))),
-        Sev => Ok(emit32(0x0320F004 | (cond_bits(inst) << 28))),
+        Wfi => Ok(emit32(0x0320_F003 | (cond_bits(inst) << 28))),
+        Wfe => Ok(emit32(0x0320_F002 | (cond_bits(inst) << 28))),
+        Sev => Ok(emit32(0x0320_F004 | (cond_bits(inst) << 28))),
+        Yield => Ok(emit32(0x0320_F001 | (cond_bits(inst) << 28))),
         _ => Err(AsmError::new(
             inst.line,
             format!("{:?} not yet supported in A32 mode", inst.mnemonic),
@@ -1798,49 +1981,61 @@ fn encode_strex_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
 
 fn encode_ldrex_bhd_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
-    match inst.operands.as_slice() {
+    // LDREXD takes Rt, Rt2, [Rn] but Rt2 is implicit (Rt+1) in A32
+    let (rt, base) = match inst.operands.as_slice() {
         [Operand::Reg(rt), Operand::Memory {
             base,
             offset: MemOffset::Imm(0),
             ..
-        }] => {
-            let c = cond_bits(inst);
-            let op = match inst.mnemonic {
-                Mnemonic::Ldrexb => 0x01D0_0F9Fu32,
-                Mnemonic::Ldrexh => 0x01F0_0F9F,
-                _ => unreachable!(),
-            };
-            let enc: u32 =
-                (c << 28) | op | ((base.value() as u32) << 16) | ((rt.value() as u32) << 12);
-            Ok(emit32(enc))
-        }
-        _ => Err(AsmError::new(line, "LDREXB/H/D: need Rt, [Rn]")),
-    }
+        }] => (*rt, *base),
+        [Operand::Reg(rt), Operand::Reg(_rt2), Operand::Memory {
+            base,
+            offset: MemOffset::Imm(0),
+            ..
+        }] => (*rt, *base),
+        _ => return Err(AsmError::new(line, "LDREXB/H/D: need Rt, [Rn]")),
+    };
+    let c = cond_bits(inst);
+    let op = match inst.mnemonic {
+        Mnemonic::Ldrexb => 0x01D0_0F9Fu32,
+        Mnemonic::Ldrexh => 0x01F0_0F9F,
+        Mnemonic::Ldrexd => 0x01B0_0F9F,
+        _ => unreachable!(),
+    };
+    let enc: u32 =
+        (c << 28) | op | ((base.value() as u32) << 16) | ((rt.value() as u32) << 12);
+    Ok(emit32(enc))
 }
 
 fn encode_strex_bhd_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
-    match inst.operands.as_slice() {
+    // STREXD takes Rd, Rt, Rt2, [Rn] but Rt2 is implicit in encoding
+    let (rd, rt, base) = match inst.operands.as_slice() {
         [Operand::Reg(rd), Operand::Reg(rt), Operand::Memory {
             base,
             offset: MemOffset::Imm(0),
             ..
-        }] => {
-            let c = cond_bits(inst);
-            let op = match inst.mnemonic {
-                Mnemonic::Strexb => 0x01C0_0F90u32,
-                Mnemonic::Strexh => 0x01E0_0F90,
-                _ => unreachable!(),
-            };
-            let enc: u32 = (c << 28)
-                | op
-                | ((base.value() as u32) << 16)
-                | ((rd.value() as u32) << 12)
-                | (rt.value() as u32);
-            Ok(emit32(enc))
-        }
-        _ => Err(AsmError::new(line, "STREXB/H/D: need Rd, Rt, [Rn]")),
-    }
+        }] => (*rd, *rt, *base),
+        [Operand::Reg(rd), Operand::Reg(rt), Operand::Reg(_rt2), Operand::Memory {
+            base,
+            offset: MemOffset::Imm(0),
+            ..
+        }] => (*rd, *rt, *base),
+        _ => return Err(AsmError::new(line, "STREXB/H/D: need Rd, Rt, [Rn]")),
+    };
+    let c = cond_bits(inst);
+    let op = match inst.mnemonic {
+        Mnemonic::Strexb => 0x01C0_0F90u32,
+        Mnemonic::Strexh => 0x01E0_0F90,
+        Mnemonic::Strexd => 0x01A0_0F90,
+        _ => unreachable!(),
+    };
+    let enc: u32 = (c << 28)
+        | op
+        | ((base.value() as u32) << 16)
+        | ((rd.value() as u32) << 12)
+        | (rt.value() as u32);
+    Ok(emit32(enc))
 }
 
 // ---------------------------------------------------------------------------
@@ -2022,23 +2217,24 @@ fn encode_smulxy_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm)] => {
-            let c = cond_bits(inst);
             let (x, y) = match inst.mnemonic {
-                Mnemonic::Smulbb => (0u32, 0u32),
-                Mnemonic::Smulbt => (0, 1),
-                Mnemonic::Smultb => (1, 0),
-                Mnemonic::Smultt => (1, 1),
+                Mnemonic::Smulbb => (false, false),
+                Mnemonic::Smulbt => (false, true),
+                Mnemonic::Smultb => (true, false),
+                Mnemonic::Smultt => (true, true),
                 _ => unreachable!(),
             };
             // cond 0001 0110 Rd 0000 Rm 1xy0 Rn
-            let enc: u32 = (c << 28)
-                | 0x0160_0080
-                | ((rd.value() as u32) << 16)
-                | ((rm.value() as u32) << 8)
-                | (x << 5)
-                | (y << 6)
-                | (rn.value() as u32);
-            Ok(emit32(enc))
+            let enc = HalfMul::new()
+                .with_cond(cond_val(inst))
+                .with_op(0x16)
+                .with_rd(*rd)
+                .with_ra(u4::new(0))
+                .with_rs(*rm)
+                .with_x(x)
+                .with_y(y)
+                .with_rm(*rn);
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "SMULxy: need Rd, Rn, Rm")),
     }
@@ -2048,24 +2244,24 @@ fn encode_smlaxy_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm), Operand::Reg(ra)] => {
-            let c = cond_bits(inst);
             let (x, y) = match inst.mnemonic {
-                Mnemonic::Smlabb => (0u32, 0u32),
-                Mnemonic::Smlabt => (0, 1),
-                Mnemonic::Smlatb => (1, 0),
-                Mnemonic::Smlatt => (1, 1),
+                Mnemonic::Smlabb => (false, false),
+                Mnemonic::Smlabt => (false, true),
+                Mnemonic::Smlatb => (true, false),
+                Mnemonic::Smlatt => (true, true),
                 _ => unreachable!(),
             };
             // cond 0001 0000 Rd Ra Rm 1xy0 Rn
-            let enc: u32 = (c << 28)
-                | 0x0100_0080
-                | ((rd.value() as u32) << 16)
-                | ((ra.value() as u32) << 12)
-                | ((rm.value() as u32) << 8)
-                | (x << 5)
-                | (y << 6)
-                | (rn.value() as u32);
-            Ok(emit32(enc))
+            let enc = HalfMul::new()
+                .with_cond(cond_val(inst))
+                .with_op(0x10)
+                .with_rd(*rd)
+                .with_ra(*ra)
+                .with_rs(*rm)
+                .with_x(x)
+                .with_y(y)
+                .with_rm(*rn);
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "SMLAxy: need Rd, Rn, Rm, Ra")),
     }
@@ -2075,24 +2271,24 @@ fn encode_smlalxy_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::Reg(rdlo), Operand::Reg(rdhi), Operand::Reg(rn), Operand::Reg(rm)] => {
-            let c = cond_bits(inst);
             let (x, y) = match inst.mnemonic {
-                Mnemonic::Smlalbb => (0u32, 0u32),
-                Mnemonic::Smlalbt => (0, 1),
-                Mnemonic::Smlaltb => (1, 0),
-                Mnemonic::Smlaltt => (1, 1),
+                Mnemonic::Smlalbb => (false, false),
+                Mnemonic::Smlalbt => (false, true),
+                Mnemonic::Smlaltb => (true, false),
+                Mnemonic::Smlaltt => (true, true),
                 _ => unreachable!(),
             };
             // cond 0001 0100 RdHi RdLo Rm 1xy0 Rn
-            let enc: u32 = (c << 28)
-                | 0x0140_0080
-                | ((rdhi.value() as u32) << 16)
-                | ((rdlo.value() as u32) << 12)
-                | ((rm.value() as u32) << 8)
-                | (x << 5)
-                | (y << 6)
-                | (rn.value() as u32);
-            Ok(emit32(enc))
+            let enc = HalfMul::new()
+                .with_cond(cond_val(inst))
+                .with_op(0x14)
+                .with_rd(*rdhi)
+                .with_ra(*rdlo)
+                .with_rs(*rm)
+                .with_x(x)
+                .with_y(y)
+                .with_rm(*rn);
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "SMLALxy: need RdLo, RdHi, Rn, Rm")),
     }
@@ -2104,33 +2300,44 @@ fn encode_smlalxy_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
 
 fn encode_smmul_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
+    // R bit (bit 5 of op2) selects rounding variant
+    let round = matches!(
+        inst.mnemonic,
+        Mnemonic::Smmulr | Mnemonic::Smmlar | Mnemonic::Smmlsr
+    );
     match inst.operands.as_slice() {
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm)]
-            if inst.mnemonic == Mnemonic::Smmul =>
+            if matches!(inst.mnemonic, Mnemonic::Smmul | Mnemonic::Smmulr) =>
         {
-            let c = cond_bits(inst);
-            // cond 0111 0101 Rd 1111 Rm 0001 Rn
-            let enc: u32 = (c << 28)
-                | 0x0750_F010
-                | ((rd.value() as u32) << 16)
-                | ((rm.value() as u32) << 8)
-                | (rn.value() as u32);
-            Ok(emit32(enc))
+            // cond 0111 0101 Rd 1111 Rm 00R1 Rn
+            let op2 = if round { 0x3u8 } else { 0x1 };
+            let enc = MediaMul::ZERO
+                .with_cond(cond_val(inst))
+                .with_op1(0x75)
+                .with_rd(*rd)
+                .with_ra(u4::new(0xF))
+                .with_rm(*rm)
+                .with_op2(u4::new(op2))
+                .with_rn(*rn);
+            Ok(emit32(enc.raw_value()))
         }
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm), Operand::Reg(ra)] => {
-            let c = cond_bits(inst);
-            let op = if inst.mnemonic == Mnemonic::Smmla {
-                0x0750_0010u32
-            } else {
-                0x0750_00D0
+            let op2 = match inst.mnemonic {
+                Mnemonic::Smmla => u4::new(0x1),
+                Mnemonic::Smmlar => u4::new(0x3),
+                Mnemonic::Smmls => u4::new(0xD),
+                Mnemonic::Smmlsr => u4::new(0xF),
+                _ => unreachable!(),
             };
-            let enc: u32 = (c << 28)
-                | op
-                | ((rd.value() as u32) << 16)
-                | ((ra.value() as u32) << 12)
-                | ((rm.value() as u32) << 8)
-                | (rn.value() as u32);
-            Ok(emit32(enc))
+            let enc = MediaMul::ZERO
+                .with_cond(cond_val(inst))
+                .with_op1(0x75)
+                .with_rd(*rd)
+                .with_ra(*ra)
+                .with_rm(*rm)
+                .with_op2(op2)
+                .with_rn(*rn);
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "SMMUL/SMMLA/SMMLS: invalid operands")),
     }
@@ -2142,35 +2349,45 @@ fn encode_smmul_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
 
 fn encode_smuad_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
+    // M bit (bit 5 of op2) selects exchange variant
+    let exchange = matches!(
+        inst.mnemonic,
+        Mnemonic::Smuadx | Mnemonic::Smusdx | Mnemonic::Smladx | Mnemonic::Smlsdx
+    );
     match inst.operands.as_slice() {
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm)] => {
-            let c = cond_bits(inst);
-            let op = match inst.mnemonic {
-                Mnemonic::Smuad => 0x0700_F010u32,
-                Mnemonic::Smusd => 0x0700_F050,
+            let base_op2: u8 = match inst.mnemonic {
+                Mnemonic::Smuad | Mnemonic::Smuadx => 0x1,
+                Mnemonic::Smusd | Mnemonic::Smusdx => 0x5,
                 _ => return Err(AsmError::new(line, "expected 3-operand DSP mul")),
             };
-            let enc: u32 = (c << 28)
-                | op
-                | ((rd.value() as u32) << 16)
-                | ((rm.value() as u32) << 8)
-                | (rn.value() as u32);
-            Ok(emit32(enc))
+            let op2 = base_op2 | ((exchange as u8) << 1);
+            let enc = MediaMul::ZERO
+                .with_cond(cond_val(inst))
+                .with_op1(0x70)
+                .with_rd(*rd)
+                .with_ra(u4::new(0xF))
+                .with_rm(*rm)
+                .with_op2(u4::new(op2))
+                .with_rn(*rn);
+            Ok(emit32(enc.raw_value()))
         }
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm), Operand::Reg(ra)] => {
-            let c = cond_bits(inst);
-            let op = match inst.mnemonic {
-                Mnemonic::Smlad => 0x0700_0010u32,
-                Mnemonic::Smlsd => 0x0700_0050,
+            let base_op2: u8 = match inst.mnemonic {
+                Mnemonic::Smlad | Mnemonic::Smladx => 0x1,
+                Mnemonic::Smlsd | Mnemonic::Smlsdx => 0x5,
                 _ => return Err(AsmError::new(line, "expected 4-operand DSP mul")),
             };
-            let enc: u32 = (c << 28)
-                | op
-                | ((rd.value() as u32) << 16)
-                | ((ra.value() as u32) << 12)
-                | ((rm.value() as u32) << 8)
-                | (rn.value() as u32);
-            Ok(emit32(enc))
+            let op2 = base_op2 | ((exchange as u8) << 1);
+            let enc = MediaMul::ZERO
+                .with_cond(cond_val(inst))
+                .with_op1(0x70)
+                .with_rd(*rd)
+                .with_ra(*ra)
+                .with_rm(*rm)
+                .with_op2(u4::new(op2))
+                .with_rn(*rn);
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "SMUAD/etc: invalid operands")),
     }
@@ -2182,21 +2399,27 @@ fn encode_smuad_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
 
 fn encode_smlald_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
+    let exchange = matches!(
+        inst.mnemonic,
+        Mnemonic::Smlaldx | Mnemonic::Smlsldx
+    );
     match inst.operands.as_slice() {
         [Operand::Reg(rdlo), Operand::Reg(rdhi), Operand::Reg(rn), Operand::Reg(rm)] => {
-            let c = cond_bits(inst);
-            let op = if inst.mnemonic == Mnemonic::Smlald {
-                0x0740_0010u32
-            } else {
-                0x0740_0050
+            let base_op2: u8 = match inst.mnemonic {
+                Mnemonic::Smlald | Mnemonic::Smlaldx => 0x1,
+                Mnemonic::Smlsld | Mnemonic::Smlsldx => 0x5,
+                _ => unreachable!(),
             };
-            let enc: u32 = (c << 28)
-                | op
-                | ((rdhi.value() as u32) << 16)
-                | ((rdlo.value() as u32) << 12)
-                | ((rm.value() as u32) << 8)
-                | (rn.value() as u32);
-            Ok(emit32(enc))
+            let op2 = base_op2 | ((exchange as u8) << 1);
+            let enc = MediaMul::ZERO
+                .with_cond(cond_val(inst))
+                .with_op1(0x74)
+                .with_rd(*rdhi)
+                .with_ra(*rdlo)
+                .with_rm(*rm)
+                .with_op2(u4::new(op2))
+                .with_rn(*rn);
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(
             line,
@@ -2215,24 +2438,28 @@ fn encode_usad8_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm)]
             if inst.mnemonic == Mnemonic::Usad8 =>
         {
-            let c = cond_bits(inst);
             // cond 0111 1000 Rd 1111 Rm 0001 Rn
-            let enc: u32 = (c << 28)
-                | 0x0780_F010
-                | ((rd.value() as u32) << 16)
-                | ((rm.value() as u32) << 8)
-                | (rn.value() as u32);
-            Ok(emit32(enc))
+            let enc = MediaMul::ZERO
+                .with_cond(cond_val(inst))
+                .with_op1(0x78)
+                .with_rd(*rd)
+                .with_ra(u4::new(0xF))
+                .with_rm(*rm)
+                .with_op2(u4::new(0x1))
+                .with_rn(*rn);
+            Ok(emit32(enc.raw_value()))
         }
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm), Operand::Reg(ra)] => {
-            let c = cond_bits(inst);
-            let enc: u32 = (c << 28)
-                | 0x0780_0010
-                | ((rd.value() as u32) << 16)
-                | ((ra.value() as u32) << 12)
-                | ((rm.value() as u32) << 8)
-                | (rn.value() as u32);
-            Ok(emit32(enc))
+            // cond 0111 1000 Rd Ra Rm 0001 Rn
+            let enc = MediaMul::ZERO
+                .with_cond(cond_val(inst))
+                .with_op1(0x78)
+                .with_rd(*rd)
+                .with_ra(*ra)
+                .with_rm(*rm)
+                .with_op2(u4::new(0x1))
+                .with_rn(*rn);
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "USAD8/USADA8: invalid operands")),
     }
@@ -2548,24 +2775,25 @@ fn encode_ldrh_unpriv_a32(
 
 fn encode_pld_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
-    // PLD [Rn, #offset]: 1111 0101 U101 Rn 1111 offset12
-    // PLD is unconditional (0xF prefix)
     match inst.operands.as_slice() {
         [Operand::Memory {
             base,
             offset: MemOffset::Imm(imm),
             ..
         }] => {
-            let (u, abs) = if *imm >= 0 {
-                (1u32, *imm as u32)
+            let (add, abs) = if *imm >= 0 {
+                (true, *imm as u32)
             } else {
-                (0, (-*imm) as u32)
+                (false, (-*imm) as u32)
             };
             if abs > 4095 {
                 return Err(AsmError::new(line, "PLD: offset out of range"));
             }
-            let enc: u32 = 0xF550_F000 | (u << 23) | ((base.value() as u32) << 16) | abs;
-            Ok(emit32(enc))
+            let enc = Preload::pld()
+                .with_add(add)
+                .with_rn(*base)
+                .with_offset12(u12::new(abs as u16));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "PLD: need [Rn, #offset]")),
     }
@@ -2577,23 +2805,25 @@ fn encode_pld_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
 
 fn encode_pli_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
-    // PLI [Rn, #offset]: 1111 0100 U101 Rn 1111 offset12
     match inst.operands.as_slice() {
         [Operand::Memory {
             base,
             offset: MemOffset::Imm(imm),
             ..
         }] => {
-            let (u, abs) = if *imm >= 0 {
-                (1u32, *imm as u32)
+            let (add, abs) = if *imm >= 0 {
+                (true, *imm as u32)
             } else {
-                (0, (-*imm) as u32)
+                (false, (-*imm) as u32)
             };
             if abs > 4095 {
                 return Err(AsmError::new(line, "PLI: offset out of range"));
             }
-            let enc: u32 = 0xF450_F000 | (u << 23) | ((base.value() as u32) << 16) | abs;
-            Ok(emit32(enc))
+            let enc = Preload::pli()
+                .with_add(add)
+                .with_rn(*base)
+                .with_offset12(u12::new(abs as u16));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "PLI: need [Rn, #offset]")),
     }
@@ -2679,5 +2909,182 @@ fn encode_dbg_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
             Ok(emit32(enc))
         }
         _ => Err(AsmError::new(line, "DBG: need #option")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// UMAAL
+// ---------------------------------------------------------------------------
+
+fn encode_umaal_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
+    let line = inst.line;
+    match inst.operands.as_slice() {
+        [Operand::Reg(rdlo), Operand::Reg(rdhi), Operand::Reg(rn), Operand::Reg(rm)] => {
+            // cond 0000 0100 RdHi RdLo Rm 1001 Rn
+            let enc = MulLong::new()
+                .with_cond(cond_val(inst))
+                .with_op(u7::new(0b0000010))
+                .with_rdhi(*rdhi)
+                .with_rdlo(*rdlo)
+                .with_rm(*rm)
+                .with_rn(*rn);
+            Ok(emit32(enc.raw_value()))
+        }
+        _ => Err(AsmError::new(line, "UMAAL: need RdLo, RdHi, Rn, Rm")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SMULWy / SMLAWy (signed multiply word by halfword)
+// ---------------------------------------------------------------------------
+
+fn encode_smulwy_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
+    let line = inst.line;
+    match inst.operands.as_slice() {
+        [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm)] => {
+            let y = inst.mnemonic == Mnemonic::Smulwt;
+            // cond 0001 0010 Rd 0000 Rm 1y10 Rn
+            let enc = HalfMul::new()
+                .with_cond(cond_val(inst))
+                .with_op(0x12)
+                .with_rd(*rd)
+                .with_ra(u4::new(0))
+                .with_rs(*rm)
+                .with_x(true) // bit 5 = 1 for SMULWy
+                .with_y(y)
+                .with_rm(*rn);
+            Ok(emit32(enc.raw_value()))
+        }
+        _ => Err(AsmError::new(line, "SMULWy: need Rd, Rn, Rm")),
+    }
+}
+
+fn encode_smlawy_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
+    let line = inst.line;
+    match inst.operands.as_slice() {
+        [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm), Operand::Reg(ra)] => {
+            let y = inst.mnemonic == Mnemonic::Smlawt;
+            // cond 0001 0010 Rd Ra Rm 1y00 Rn
+            let enc = HalfMul::new()
+                .with_cond(cond_val(inst))
+                .with_op(0x12)
+                .with_rd(*rd)
+                .with_ra(*ra)
+                .with_rs(*rm)
+                .with_x(false) // bit 5 = 0 for SMLAWy
+                .with_y(y)
+                .with_rm(*rn);
+            Ok(emit32(enc.raw_value()))
+        }
+        _ => Err(AsmError::new(line, "SMLAWy: need Rd, Rn, Rm, Ra")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SSAT16 / USAT16
+// ---------------------------------------------------------------------------
+
+fn encode_ssat16_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
+    let line = inst.line;
+    match inst.operands.as_slice() {
+        [Operand::Reg(rd), Operand::Imm(sat), Operand::Reg(rn)] => {
+            let enc = Sat16::ssat16()
+                .with_cond(cond_val(inst))
+                .with_sat_imm(u4::new((*sat as u8) - 1))
+                .with_rd(*rd)
+                .with_rn(*rn);
+            Ok(emit32(enc.raw_value()))
+        }
+        _ => Err(AsmError::new(line, "SSAT16: need Rd, #sat, Rn")),
+    }
+}
+
+fn encode_usat16_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
+    let line = inst.line;
+    match inst.operands.as_slice() {
+        [Operand::Reg(rd), Operand::Imm(sat), Operand::Reg(rn)] => {
+            let enc = Sat16::usat16()
+                .with_cond(cond_val(inst))
+                .with_sat_imm(u4::new(*sat as u8))
+                .with_rd(*rd)
+                .with_rn(*rn);
+            Ok(emit32(enc.raw_value()))
+        }
+        _ => Err(AsmError::new(line, "USAT16: need Rd, #sat, Rn")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PLDW (Preload Data for Write)
+// ---------------------------------------------------------------------------
+
+fn encode_pldw_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
+    let line = inst.line;
+    match inst.operands.as_slice() {
+        [Operand::Memory {
+            base,
+            offset: MemOffset::Imm(imm),
+            ..
+        }] => {
+            let (add, abs) = if *imm >= 0 {
+                (true, *imm as u32)
+            } else {
+                (false, (-*imm) as u32)
+            };
+            if abs > 4095 {
+                return Err(AsmError::new(line, "PLDW: offset out of range"));
+            }
+            let enc = Preload::pldw()
+                .with_add(add)
+                .with_rn(*base)
+                .with_offset12(u12::new(abs as u16));
+            Ok(emit32(enc.raw_value()))
+        }
+        _ => Err(AsmError::new(line, "PLDW: need [Rn, #offset]")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SWP / SWPB (deprecated but valid ARMv7)
+// ---------------------------------------------------------------------------
+
+fn encode_swp_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
+    let line = inst.line;
+    match inst.operands.as_slice() {
+        [Operand::Reg(rt), Operand::Reg(rm), Operand::Memory {
+            base,
+            offset: MemOffset::Imm(0),
+            ..
+        }] => {
+            let enc = Swp::new()
+                .with_cond(cond_val(inst))
+                .with_byte(inst.mnemonic == Mnemonic::Swpb)
+                .with_rn(*base)
+                .with_rt(*rt)
+                .with_rm(*rm);
+            Ok(emit32(enc.raw_value()))
+        }
+        _ => Err(AsmError::new(line, "SWP: need Rt, Rm, [Rn]")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SETEND
+// ---------------------------------------------------------------------------
+
+fn encode_setend_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
+    let line = inst.line;
+    match inst.operands.as_slice() {
+        [Operand::Label(s)] => {
+            let e = match s.to_ascii_uppercase().as_str() {
+                "BE" => 1u32,
+                "LE" => 0,
+                _ => return Err(AsmError::new(line, "SETEND: need BE or LE")),
+            };
+            // 1111 0001 0000 0001 0000 00E0 0000 0000
+            let enc: u32 = 0xF101_0000 | (e << 9);
+            Ok(emit32(enc))
+        }
+        _ => Err(AsmError::new(line, "SETEND: need BE or LE")),
     }
 }

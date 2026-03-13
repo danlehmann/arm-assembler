@@ -2441,3 +2441,87 @@ fn a32_context_switch_pattern() {
         "cortex-a7",
     );
 }
+
+// ---------------------------------------------------------------------------
+// New A32 instructions
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a32_umaal() {
+    check_a32("umaal r0, r1, r2, r3", "cortex-a7");
+    check_a32("umaal r4, r5, r6, r7", "cortex-a7");
+}
+
+#[test]
+fn a32_smulwy() {
+    check_a32("smulwb r0, r1, r2", "cortex-a7");
+    check_a32("smulwt r0, r1, r2", "cortex-a7");
+    check_a32("smulwb r3, r4, r5", "cortex-a7");
+    check_a32("smulwt r6, r7, r8", "cortex-a7");
+}
+
+#[test]
+fn a32_smlawy() {
+    check_a32("smlawb r0, r1, r2, r3", "cortex-a7");
+    check_a32("smlawt r0, r1, r2, r3", "cortex-a7");
+    check_a32("smlawb r4, r5, r6, r7", "cortex-a7");
+    check_a32("smlawt r8, r9, r10, r11", "cortex-a7");
+}
+
+#[test]
+fn a32_smmul_round() {
+    check_a32("smmulr r0, r1, r2", "cortex-a7");
+    check_a32("smmlar r0, r1, r2, r3", "cortex-a7");
+    check_a32("smmlsr r0, r1, r2, r3", "cortex-a7");
+}
+
+#[test]
+fn a32_smuad_exchange() {
+    check_a32("smuadx r0, r1, r2", "cortex-a7");
+    check_a32("smusdx r0, r1, r2", "cortex-a7");
+    check_a32("smladx r0, r1, r2, r3", "cortex-a7");
+    check_a32("smlsdx r0, r1, r2, r3", "cortex-a7");
+}
+
+#[test]
+fn a32_smlald_exchange() {
+    check_a32("smlaldx r0, r1, r2, r3", "cortex-a7");
+    check_a32("smlsldx r0, r1, r2, r3", "cortex-a7");
+}
+
+#[test]
+fn a32_ssat16_usat16() {
+    check_a32("ssat16 r0, #1, r1", "cortex-a7");
+    check_a32("ssat16 r2, #8, r3", "cortex-a7");
+    check_a32("usat16 r0, #0, r1", "cortex-a7");
+    check_a32("usat16 r4, #15, r5", "cortex-a7");
+}
+
+#[test]
+fn a32_yield() {
+    check_a32("yield", "cortex-a7");
+}
+
+#[test]
+fn a32_swp() {
+    check_a32("swp r0, r1, [r2]", "arm7tdmi");
+    check_a32("swpb r3, r4, [r5]", "arm7tdmi");
+}
+
+#[test]
+fn a32_ldrexd_strexd() {
+    check_a32("ldrexd r0, r1, [r2]", "cortex-a7");
+    check_a32("strexd r0, r2, r3, [r4]", "cortex-a7");
+}
+
+#[test]
+fn a32_pldw() {
+    check_a32("pldw [r0]", "cortex-a7");
+    check_a32("pldw [r1, #100]", "cortex-a7");
+}
+
+#[test]
+fn a32_setend() {
+    check_a32("setend be", "cortex-a7");
+    check_a32("setend le", "cortex-a7");
+}

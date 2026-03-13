@@ -162,7 +162,7 @@ fn instruction_size(inst: &Instruction, isa: Isa) -> u32 {
             match inst.mnemonic {
                 Mnemonic::Bl | Mnemonic::Movw | Mnemonic::Movt | Mnemonic::Orn
                 | Mnemonic::Sdiv | Mnemonic::Udiv | Mnemonic::Mls
-                | Mnemonic::Smlal | Mnemonic::Umlal
+                | Mnemonic::Smlal | Mnemonic::Umlal | Mnemonic::Umaal
                 | Mnemonic::Clz | Mnemonic::Rbit
                 | Mnemonic::Bfi | Mnemonic::Bfc | Mnemonic::Ubfx | Mnemonic::Sbfx
                 | Mnemonic::Ldrd | Mnemonic::Strd
@@ -171,24 +171,31 @@ fn instruction_size(inst: &Instruction, isa: Isa) -> u32 {
                 | Mnemonic::Ldrexh | Mnemonic::Strexh | Mnemonic::Clrex
                 | Mnemonic::Mrs | Mnemonic::Msr
                 | Mnemonic::Tbb | Mnemonic::Tbh
-                | Mnemonic::Ssat | Mnemonic::Usat
+                | Mnemonic::Ssat | Mnemonic::Usat | Mnemonic::Ssat16 | Mnemonic::Usat16
                 | Mnemonic::Ldrt | Mnemonic::Strt
                 | Mnemonic::Ldrbt | Mnemonic::Strbt
                 | Mnemonic::Ldrht | Mnemonic::Strht
                 | Mnemonic::Ldrsbt | Mnemonic::Ldrsht
-                | Mnemonic::Pld | Mnemonic::Pli
+                | Mnemonic::Pld | Mnemonic::Pldw | Mnemonic::Pli
                 | Mnemonic::Dbg | Mnemonic::Rrx
                 // DSP multiply (always 32-bit)
-                | Mnemonic::Smmul | Mnemonic::Smmla | Mnemonic::Smmls
+                | Mnemonic::Smmul | Mnemonic::Smmulr
+                | Mnemonic::Smmla | Mnemonic::Smmlar
+                | Mnemonic::Smmls | Mnemonic::Smmlsr
                 | Mnemonic::Smulbb | Mnemonic::Smulbt
                 | Mnemonic::Smultb | Mnemonic::Smultt
+                | Mnemonic::Smulwb | Mnemonic::Smulwt
                 | Mnemonic::Smlabb | Mnemonic::Smlabt
                 | Mnemonic::Smlatb | Mnemonic::Smlatt
+                | Mnemonic::Smlawb | Mnemonic::Smlawt
                 | Mnemonic::Smlalbb | Mnemonic::Smlalbt
                 | Mnemonic::Smlaltb | Mnemonic::Smlaltt
-                | Mnemonic::Smuad | Mnemonic::Smusd
-                | Mnemonic::Smlad | Mnemonic::Smlsd
-                | Mnemonic::Smlald | Mnemonic::Smlsld
+                | Mnemonic::Smuad | Mnemonic::Smuadx
+                | Mnemonic::Smusd | Mnemonic::Smusdx
+                | Mnemonic::Smlad | Mnemonic::Smladx
+                | Mnemonic::Smlsd | Mnemonic::Smlsdx
+                | Mnemonic::Smlald | Mnemonic::Smlaldx
+                | Mnemonic::Smlsld | Mnemonic::Smlsldx
                 | Mnemonic::Usad8 | Mnemonic::Usada8
                 // Parallel arithmetic (always 32-bit)
                 | Mnemonic::Sadd16 | Mnemonic::Sadd8
