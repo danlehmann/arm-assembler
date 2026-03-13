@@ -4,7 +4,7 @@ mod error;
 mod lexer;
 mod parser;
 
-pub use ast::Isa;
+pub use ast::{Cpu, Isa};
 pub use error::AsmError;
 
 /// Configuration for the assembler.

@@ -15,6 +15,50 @@ pub enum Isa {
     A32,
 }
 
+/// Target CPU, determines available instructions and default ISA.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cpu {
+    /// ARM7TDMI — ARMv4T, Thumb-1 only
+    Arm7Tdmi,
+    /// Cortex-M4 — ARMv7E-M, Thumb-2 (no ARM mode)
+    CortexM4,
+    /// Cortex-A7 — ARMv7-A, Thumb-2 + ARM
+    CortexA7,
+    /// Cortex-R5 — ARMv7-R, Thumb-2 + ARM
+    CortexR5,
+}
+
+impl Cpu {
+    /// Name as expected by GNU as `-mcpu=`.
+    pub fn gnu_name(self) -> &'static str {
+        match self {
+            Self::Arm7Tdmi => "arm7tdmi",
+            Self::CortexM4 => "cortex-m4",
+            Self::CortexA7 => "cortex-a7",
+            Self::CortexR5 => "cortex-r5",
+        }
+    }
+
+    /// Default ISA for this CPU.
+    pub fn default_isa(self) -> Isa {
+        match self {
+            Self::CortexM4 => Isa::Thumb,
+            _ => Isa::A32,
+        }
+    }
+
+    /// Parse a CPU name string (as used by GNU as).
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "arm7tdmi" => Some(Self::Arm7Tdmi),
+            "cortex-m4" => Some(Self::CortexM4),
+            "cortex-a7" => Some(Self::CortexA7),
+            "cortex-r5" => Some(Self::CortexR5),
+            _ => None,
+        }
+    }
+}
+
 /// ARM condition codes, usable directly in `#[bitfield]` structs as a `u4` field.
 #[bitenum(u4, exhaustive = true)]
 #[derive(Debug, PartialEq, Eq)]
