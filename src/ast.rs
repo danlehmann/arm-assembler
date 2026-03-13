@@ -1,4 +1,4 @@
-use arbitrary_int::u4;
+use arbitrary_int::prelude::*;
 use bitbybit::bitenum;
 
 /// Well-known register constants for pattern matching.

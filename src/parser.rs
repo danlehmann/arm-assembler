@@ -1,4 +1,4 @@
-use arbitrary_int::u4;
+use arbitrary_int::prelude::*;
 
 use crate::ast::*;
 use crate::error::AsmError;
