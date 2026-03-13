@@ -1554,3 +1554,863 @@ fn a32_pld_pli() {
     check_a32("pli [r0]", "cortex-a7");
     check_a32("pli [r0, #32]", "cortex-a7");
 }
+
+// ===========================================================================
+// Systematic register coverage tests
+// ===========================================================================
+
+/// Interesting register indices for systematic testing.
+/// Covers low regs (0,1,5,7), the narrow/wide Thumb boundary (7→8),
+/// high regs (8,12), and LR (14). Excludes SP(13) and PC(15) which
+/// have special restrictions in most instructions.
+const TEST_REGS: &[u8] = &[0, 1, 5, 7, 8, 12, 14];
+
+/// Smaller set for 4-operand instructions to keep runtime reasonable.
+const TEST_REGS_4OP: &[u8] = &[0, 5, 8, 12];
+
+fn rn(r: u8) -> String {
+    format!("r{r}")
+}
+
+/// Iterate all distinct pairs from `regs`.
+fn test_2_args(regs: &[u8], mut f: impl FnMut(u8, u8)) {
+    for &a in regs {
+        for &b in regs {
+            if a != b {
+                f(a, b);
+            }
+        }
+    }
+}
+
+/// Iterate all distinct triples from `regs`.
+fn test_3_args(regs: &[u8], mut f: impl FnMut(u8, u8, u8)) {
+    for &a in regs {
+        for &b in regs {
+            for &c in regs {
+                if a != b && a != c && b != c {
+                    f(a, b, c);
+                }
+            }
+        }
+    }
+}
+
+/// Iterate all distinct quads from `regs`.
+fn test_4_args(regs: &[u8], mut f: impl FnMut(u8, u8, u8, u8)) {
+    for &a in regs {
+        for &b in regs {
+            for &c in regs {
+                for &d in regs {
+                    if a != b && a != c && a != d && b != c && b != d && c != d {
+                        f(a, b, c, d);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// A32: Systematic register tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a32_regs_2op_unary() {
+    for mn in ["rev", "rev16", "revsh", "clz", "rbit"] {
+        test_2_args(TEST_REGS, |rd, rm| {
+            check_a32(&format!("{mn} {}, {}", rn(rd), rn(rm)), "cortex-a7");
+        });
+    }
+}
+
+#[test]
+fn a32_regs_2op_extend() {
+    for mn in ["sxth", "sxtb", "uxth", "uxtb", "sxtb16", "uxtb16"] {
+        test_2_args(TEST_REGS, |rd, rm| {
+            check_a32(&format!("{mn} {}, {}", rn(rd), rn(rm)), "cortex-a7");
+        });
+    }
+}
+
+#[test]
+fn a32_regs_2op_mov() {
+    for mn in ["mov", "mvn"] {
+        test_2_args(TEST_REGS, |rd, rm| {
+            check_a32(&format!("{mn} {}, {}", rn(rd), rn(rm)), "cortex-a7");
+        });
+    }
+}
+
+#[test]
+fn a32_regs_2op_test() {
+    for mn in ["cmp", "cmn", "tst", "teq"] {
+        test_2_args(TEST_REGS, |rn_reg, rm| {
+            check_a32(&format!("{mn} {}, {}", rn(rn_reg), rn(rm)), "cortex-a7");
+        });
+    }
+}
+
+#[test]
+fn a32_regs_3op_dp() {
+    for mn in ["add", "sub", "and", "orr", "eor", "bic", "adc", "sbc", "rsb", "rsc"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_a32(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_3op_shift() {
+    for mn in ["lsl", "lsr", "asr", "ror"] {
+        test_3_args(TEST_REGS, |rd, rm, rs| {
+            check_a32(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rm), rn(rs)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_3op_mul() {
+    for mn in ["mul", "smmul", "smuad", "smusd", "usad8"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_a32(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_3op_dsp_mul() {
+    for mn in ["smulbb", "smulbt", "smultb", "smultt"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_a32(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_3op_div() {
+    for mn in ["sdiv", "udiv"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_a32(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_3op_parallel() {
+    for mn in [
+        "sadd16", "sadd8", "ssub16", "ssub8", "uadd16", "uadd8", "usub16", "usub8",
+        "qadd16", "qadd8", "qsub16", "qsub8", "shadd16", "shadd8", "shsub16", "shsub8",
+        "uhadd16", "uhadd8", "uhsub16", "uhsub8", "uqadd16", "uqadd8", "uqsub16", "uqsub8",
+        "sasx", "ssax", "uasx", "usax", "qasx", "qsax",
+        "shasx", "shsax", "uhasx", "uhsax", "uqasx", "uqsax",
+    ] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_a32(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_3op_sat_arith() {
+    for mn in ["qadd", "qdadd", "qsub", "qdsub"] {
+        test_3_args(TEST_REGS, |rd, rm, rn_reg| {
+            check_a32(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rm), rn(rn_reg)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_3op_extend_add() {
+    for mn in ["sxtab", "sxtah", "uxtab", "uxtah", "sxtab16", "uxtab16"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_a32(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_3op_packing() {
+    for mn in ["sel", "pkhbt"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_a32(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_4op_mla() {
+    for mn in [
+        "mla", "mls", "smmla", "smmls", "smlad", "smlsd", "usada8",
+        "smlabb", "smlabt", "smlatb", "smlatt",
+    ] {
+        test_4_args(TEST_REGS_4OP, |rd, rn_reg, rm, ra| {
+            check_a32(
+                &format!("{mn} {}, {}, {}, {}", rn(rd), rn(rn_reg), rn(rm), rn(ra)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_4op_long_mul() {
+    for mn in [
+        "umull", "smull", "umlal", "smlal",
+        "smlalbb", "smlalbt", "smlaltb", "smlaltt", "smlald", "smlsld",
+    ] {
+        test_4_args(TEST_REGS_4OP, |rdlo, rdhi, rn_reg, rm| {
+            check_a32(
+                &format!("{mn} {}, {}, {}, {}", rn(rdlo), rn(rdhi), rn(rn_reg), rn(rm)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+#[test]
+fn a32_regs_ldr_str_reg() {
+    for mn in ["ldr", "ldrb", "ldrh", "str", "strb", "strh"] {
+        test_3_args(TEST_REGS, |rt, base, rm| {
+            check_a32(
+                &format!("{mn} {}, [{}, {}]", rn(rt), rn(base), rn(rm)),
+                "cortex-a7",
+            );
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Thumb: Systematic register tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn thumb_regs_2op_unary() {
+    for mn in ["rev", "rev16", "revsh", "sxth", "sxtb", "uxth", "uxtb"] {
+        test_2_args(TEST_REGS, |rd, rm| {
+            check_thumb(&format!("{mn} {}, {}", rn(rd), rn(rm)), "cortex-m4");
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_2op_mov() {
+    // MOV (no flags) works with any regs via Format 5
+    test_2_args(TEST_REGS, |rd, rm| {
+        check_thumb(&format!("mov {}, {}", rn(rd), rn(rm)), "cortex-m4");
+    });
+}
+
+#[test]
+fn thumb_regs_2op_test() {
+    for mn in ["cmp", "cmn", "tst"] {
+        test_2_args(TEST_REGS, |rn_reg, rm| {
+            check_thumb(&format!("{mn}.w {}, {}", rn(rn_reg), rn(rm)), "cortex-m4");
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_3op_dp() {
+    for mn in ["add", "sub", "and", "orr", "eor", "bic", "adc", "sbc"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_thumb(
+                &format!("{mn}.w {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_3op_dp_narrow_collapse() {
+    // Test that 3-reg form with Rd==Rn produces correct narrow encoding
+    for mn in ["and", "orr", "eor", "bic", "adc", "sbc"] {
+        for &rd in &[0u8, 1, 5, 7] {
+            for &rm in &[0u8, 1, 5, 7] {
+                if rd != rm {
+                    check_thumb(
+                        &format!("{mn}s {}, {}, {}", rn(rd), rn(rd), rn(rm)),
+                        "cortex-m4",
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn thumb_regs_3op_shift() {
+    for mn in ["lsl", "lsr", "asr"] {
+        test_3_args(TEST_REGS, |rd, rm, rs| {
+            check_thumb(
+                &format!("{mn}.w {}, {}, {}", rn(rd), rn(rm), rn(rs)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_3op_mul() {
+    for mn in ["mul", "smmul", "smuad", "smusd", "usad8"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_thumb(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_3op_dsp_mul() {
+    for mn in ["smulbb", "smulbt", "smultb", "smultt"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_thumb(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_3op_div() {
+    for mn in ["sdiv", "udiv"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_thumb(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_3op_parallel() {
+    for mn in [
+        "sadd16", "sadd8", "ssub16", "ssub8", "uadd16", "uadd8", "usub16", "usub8",
+        "qadd16", "qadd8", "qsub16", "qsub8", "shadd16", "shadd8", "shsub16", "shsub8",
+        "uhadd16", "uhadd8", "uhsub16", "uhsub8", "uqadd16", "uqadd8", "uqsub16", "uqsub8",
+        "sasx", "ssax", "uasx", "usax", "qasx", "qsax",
+        "shasx", "shsax", "uhasx", "uhsax", "uqasx", "uqsax",
+    ] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_thumb(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_3op_sat_arith() {
+    for mn in ["qadd", "qdadd", "qsub", "qdsub"] {
+        test_3_args(TEST_REGS, |rd, rm, rn_reg| {
+            check_thumb(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rm), rn(rn_reg)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_3op_extend_add() {
+    for mn in ["sxtab", "sxtah", "uxtab", "uxtah", "sxtab16", "uxtab16"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_thumb(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_3op_packing() {
+    for mn in ["sel", "pkhbt"] {
+        test_3_args(TEST_REGS, |rd, rn_reg, rm| {
+            check_thumb(
+                &format!("{mn} {}, {}, {}", rn(rd), rn(rn_reg), rn(rm)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_2op_clz_rbit() {
+    for mn in ["clz", "rbit"] {
+        test_2_args(TEST_REGS, |rd, rm| {
+            check_thumb(&format!("{mn} {}, {}", rn(rd), rn(rm)), "cortex-m4");
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_4op_mla() {
+    for mn in [
+        "mla", "mls", "smmla", "smmls", "smlad", "smlsd", "usada8",
+        "smlabb", "smlabt", "smlatb", "smlatt",
+    ] {
+        test_4_args(TEST_REGS_4OP, |rd, rn_reg, rm, ra| {
+            check_thumb(
+                &format!("{mn} {}, {}, {}, {}", rn(rd), rn(rn_reg), rn(rm), rn(ra)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_4op_long_mul() {
+    for mn in [
+        "umull", "smull", "umlal", "smlal",
+        "smlalbb", "smlalbt", "smlaltb", "smlaltt", "smlald", "smlsld",
+    ] {
+        test_4_args(TEST_REGS_4OP, |rdlo, rdhi, rn_reg, rm| {
+            check_thumb(
+                &format!("{mn} {}, {}, {}, {}", rn(rdlo), rn(rdhi), rn(rn_reg), rn(rm)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+#[test]
+fn thumb_regs_ldr_str_reg() {
+    for mn in ["ldr", "ldrb", "ldrh", "str", "strb", "strh"] {
+        test_3_args(TEST_REGS, |rt, base, rm| {
+            check_thumb(
+                &format!("{mn}.w {}, [{}, {}]", rn(rt), rn(base), rn(rm)),
+                "cortex-m4",
+            );
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bug-targeted tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn thumb_pld_pli_negative_offset() {
+    check_thumb("pld [r0, #-32]", "cortex-m4");
+    check_thumb("pld [r5, #-1]", "cortex-m4");
+    check_thumb("pld [r0, #-255]", "cortex-m4");
+    check_thumb("pli [r0, #-16]", "cortex-m4");
+    check_thumb("pli [r3, #-128]", "cortex-m4");
+}
+
+#[test]
+fn thumb_pld_pli_positive_offset() {
+    check_thumb("pld [r0]", "cortex-m4");
+    check_thumb("pld [r5, #100]", "cortex-m4");
+    check_thumb("pld [r0, #4095]", "cortex-m4");
+    check_thumb("pli [r0]", "cortex-m4");
+    check_thumb("pli [r7, #64]", "cortex-m4");
+}
+
+#[test]
+fn thumb_misc_high_regs() {
+    // These require wide encoding (was silently truncating high regs before fix)
+    for mn in ["rev", "rev16", "revsh", "sxth", "sxtb", "uxth", "uxtb"] {
+        check_thumb(&format!("{mn} r8, r9"), "cortex-m4");
+        check_thumb(&format!("{mn} r0, r8"), "cortex-m4");
+        check_thumb(&format!("{mn} r12, r0"), "cortex-m4");
+    }
+}
+
+#[test]
+fn thumb_alu_narrow_collapse() {
+    // 3-reg form where Rd==Rn should produce narrow encoding
+    check_thumb("ands r0, r0, r1", "cortex-m4");
+    check_thumb("orrs r3, r3, r5", "cortex-m4");
+    check_thumb("eors r2, r2, r4", "cortex-m4");
+    check_thumb("bics r1, r1, r6", "cortex-m4");
+    check_thumb("adcs r0, r0, r3", "cortex-m4");
+    check_thumb("sbcs r2, r2, r7", "cortex-m4");
+}
+
+#[test]
+fn thumb_adc_sbc_narrow() {
+    // ADC/SBC narrow 2-reg form
+    check_thumb("adcs r0, r1", "cortex-m4");
+    check_thumb("adcs r3, r5", "cortex-m4");
+    check_thumb("sbcs r2, r4", "cortex-m4");
+    check_thumb("sbcs r7, r0", "cortex-m4");
+}
+
+#[test]
+fn thumb_push_pop_high_regs() {
+    // PUSH/POP with high registers require wide encoding
+    check_thumb("push {r4-r11, lr}", "cortex-m4");
+    check_thumb("pop {r4-r11, pc}", "cortex-m4");
+    check_thumb("push {r4-r8, lr}", "cortex-m4");
+    check_thumb("pop {r4-r8, pc}", "cortex-m4");
+}
+
+#[test]
+fn thumb_neg_regs() {
+    // NEGS (RSBS Rd, Rm, #0) - narrow for low regs
+    check_thumb("negs r0, r1", "cortex-m4");
+    check_thumb("negs r7, r5", "cortex-m4");
+    // NEG with high regs needs wide encoding
+    check_thumb("neg.w r8, r0", "cortex-m4");
+    check_thumb("neg.w r0, r8", "cortex-m4");
+}
+
+// ---------------------------------------------------------------------------
+// Boundary value tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a32_imm_boundaries() {
+    // Maximum encodable immediate values
+    check_a32("mov r0, #0", "cortex-a7");
+    check_a32("mov r0, #255", "cortex-a7");
+    check_a32("mov r0, #0xFF00", "cortex-a7");
+    check_a32("mov r0, #0xFF000000", "cortex-a7");
+    // Large rotated immediates
+    check_a32("add r0, r1, #0x3FC00", "cortex-a7");
+}
+
+#[test]
+fn thumb_imm_boundaries() {
+    // Narrow immediate boundaries
+    check_thumb("movs r0, #0", "cortex-m4");
+    check_thumb("movs r0, #255", "cortex-m4");
+    // Wide immediate patterns
+    check_thumb("mov.w r0, #256", "cortex-m4");
+    check_thumb("mov.w r0, #0x00FF00FF", "cortex-m4");
+    check_thumb("mov.w r0, #0xFF00FF00", "cortex-m4");
+    check_thumb("mov.w r0, #0xFFFFFFFF", "cortex-m4");
+}
+
+#[test]
+fn thumb_ldr_str_imm_boundaries() {
+    // Narrow LDR/STR boundary: max word offset = 124
+    check_thumb("ldr r0, [r1, #0]", "cortex-m4");
+    check_thumb("ldr r0, [r1, #124]", "cortex-m4");
+    // Beyond narrow → wide
+    check_thumb("ldr r0, [r1, #128]", "cortex-m4");
+    check_thumb("ldr r0, [r1, #4095]", "cortex-m4");
+    // Narrow byte: max 31
+    check_thumb("ldrb r0, [r1, #0]", "cortex-m4");
+    check_thumb("ldrb r0, [r1, #31]", "cortex-m4");
+    check_thumb("ldrb r0, [r1, #32]", "cortex-m4");
+    // Narrow half: max 62
+    check_thumb("ldrh r0, [r1, #0]", "cortex-m4");
+    check_thumb("ldrh r0, [r1, #62]", "cortex-m4");
+    check_thumb("ldrh r0, [r1, #64]", "cortex-m4");
+    // SP-relative: max 1020
+    check_thumb("ldr r0, [sp, #0]", "cortex-m4");
+    check_thumb("ldr r0, [sp, #1020]", "cortex-m4");
+    check_thumb("ldr r0, [sp, #1024]", "cortex-m4");
+    // Negative offset → wide
+    check_thumb("ldr r0, [r1, #-1]", "cortex-m4");
+    check_thumb("str r0, [r1, #-255]", "cortex-m4");
+}
+
+#[test]
+fn a32_ldr_str_imm_boundaries() {
+    check_a32("ldr r0, [r1, #0]", "cortex-a7");
+    check_a32("ldr r0, [r1, #4095]", "cortex-a7");
+    check_a32("ldr r0, [r1, #-4095]", "cortex-a7");
+    check_a32("ldrh r0, [r1, #0]", "cortex-a7");
+    check_a32("ldrh r0, [r1, #255]", "cortex-a7");
+    check_a32("ldrh r0, [r1, #-255]", "cortex-a7");
+}
+
+#[test]
+fn a32_shift_imm_boundaries() {
+    // Shift amount boundaries
+    check_a32("lsl r0, r1, #0", "cortex-a7");
+    check_a32("lsl r0, r1, #1", "cortex-a7");
+    check_a32("lsl r0, r1, #31", "cortex-a7");
+    check_a32("lsr r0, r1, #1", "cortex-a7");
+    check_a32("lsr r0, r1, #32", "cortex-a7");
+    check_a32("asr r0, r1, #1", "cortex-a7");
+    check_a32("asr r0, r1, #32", "cortex-a7");
+    check_a32("ror r0, r1, #1", "cortex-a7");
+    check_a32("ror r0, r1, #31", "cortex-a7");
+}
+
+#[test]
+fn thumb_shift_imm_boundaries() {
+    check_thumb("lsls r0, r1, #0", "cortex-m4");
+    check_thumb("lsls r0, r1, #1", "cortex-m4");
+    check_thumb("lsls r0, r1, #31", "cortex-m4");
+    check_thumb("lsrs r0, r1, #1", "cortex-m4");
+    check_thumb("lsrs r0, r1, #32", "cortex-m4");
+    check_thumb("asrs r0, r1, #1", "cortex-m4");
+    check_thumb("asrs r0, r1, #32", "cortex-m4");
+}
+
+#[test]
+fn thumb_add_sub_imm_boundaries() {
+    // Narrow ADD imm3: 0-7
+    check_thumb("adds r0, r1, #0", "cortex-m4");
+    check_thumb("adds r0, r1, #7", "cortex-m4");
+    // Narrow ADD imm8: 0-255
+    check_thumb("adds r0, #0", "cortex-m4");
+    check_thumb("adds r0, #255", "cortex-m4");
+    // Wide: larger immediates
+    check_thumb("add.w r0, r1, #256", "cortex-m4");
+}
+
+// ---------------------------------------------------------------------------
+// Multi-instruction / integration tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn thumb_realistic_isr() {
+    check_thumb(
+        "push {r4-r7, lr}\n\
+         mov r4, r0\n\
+         ldr r0, [r4, #0]\n\
+         adds r0, #1\n\
+         str r0, [r4, #0]\n\
+         pop {r4-r7, pc}",
+        "cortex-m4",
+    );
+}
+
+#[test]
+fn a32_realistic_loop() {
+    check_a32(
+        "mov r0, #0\n\
+         mov r1, #10\n\
+         loop:\n\
+         add r0, r0, #1\n\
+         cmp r0, r1\n\
+         blt loop",
+        "cortex-a7",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bugs found via snippet comparison testing
+// ---------------------------------------------------------------------------
+
+// A32 PUSH/POP single register: should use STR/LDR encoding, not STMDB/LDMIA
+#[test]
+fn a32_push_single_register() {
+    check_a32("push {r1}", "cortex-a7");
+    check_a32("push {r0}", "cortex-a7");
+    check_a32("push {lr}", "cortex-a7");
+    check_a32("pop {r1}", "cortex-a7");
+    check_a32("pop {r0}", "cortex-a7");
+    check_a32("pop {pc}", "cortex-a7");
+}
+
+#[test]
+fn a32_push_multi_register() {
+    // Multi-register should still use STMDB/LDMIA
+    check_a32("push {r0-r12, r14}", "cortex-a7");
+    check_a32("pop {r0-r12, r14}", "cortex-a7");
+    check_a32("push {r1, r12}", "cortex-a7");
+    check_a32("pop {r1, r12}", "cortex-a7");
+}
+
+// Thumb ADDS Rd, Rd, #imm should prefer format-3 (ADDS Rd, #imm8) when Rd==Rn
+#[test]
+fn thumb_adds_rd_rd_imm_format3() {
+    check_thumb("adds r1, r1, #4", "cortex-m4");
+    check_thumb("adds r0, r0, #100", "cortex-m4");
+    check_thumb("adds r7, r7, #255", "cortex-m4");
+    // Different Rd/Rn should still use format-2
+    check_thumb("adds r0, r1, #3", "cortex-m4");
+}
+
+// Thumb SUBS Rd, Rd, #imm should prefer format-3 when Rd==Rn
+#[test]
+fn thumb_subs_rd_rd_imm_format3() {
+    check_thumb("subs r1, r1, #4", "cortex-m4");
+    check_thumb("subs r2, r2, #100", "cortex-m4");
+    check_thumb("subs r0, r1, #3", "cortex-m4");
+}
+
+// Thumb MOV without S (outside IT block): must use wide encoding to avoid setting flags
+#[test]
+fn thumb_mov_no_flags_wide() {
+    check_thumb("mov r0, #4", "cortex-m4");
+    check_thumb("mov r0, #0", "cortex-m4");
+    check_thumb("mov r1, #255", "cortex-m4");
+    // MOVS should still be narrow
+    check_thumb("movs r0, #4", "cortex-m4");
+    check_thumb("movs r1, #255", "cortex-m4");
+}
+
+// Thumb MOV inside IT block: narrow is OK (IT suppresses flag setting)
+#[test]
+fn thumb_mov_in_it_block() {
+    check_thumb("cmp r0, #0\nit eq\nmoveq r1, #1", "cortex-m4");
+    check_thumb("cmp r0, #1\nit ne\nmovne r1, #0", "cortex-m4");
+}
+
+// Thumb DBG instruction: always 32-bit
+#[test]
+fn thumb_dbg() {
+    check_thumb("dbg #0", "cortex-m4");
+    check_thumb("dbg #5", "cortex-m4");
+}
+
+// Thumb RRX instruction: always 32-bit
+#[test]
+fn thumb_rrx() {
+    check_thumb("rrx r0, r1", "cortex-m4");
+    check_thumb("rrx r8, r9", "cortex-m4");
+}
+
+// DBG/RRX size prediction affects subsequent label offsets
+#[test]
+fn thumb_dbg_then_branch() {
+    check_thumb("dbg #0\nb target\nnop\ntarget:\nnop", "cortex-m4");
+}
+
+#[test]
+fn thumb_rrx_then_branch() {
+    check_thumb("rrx r0, r1\nb target\nnop\ntarget:\nnop", "cortex-m4");
+}
+
+// Thumb CBZ/CBNZ
+#[test]
+fn thumb_cbz_cbnz() {
+    check_thumb("cbz r0, target\nnop\ntarget:\nnop", "cortex-m4");
+    check_thumb("cbnz r1, target\nnop\nnop\ntarget:\nnop", "cortex-m4");
+}
+
+// Thumb CPSIE/CPSID with flag identifiers
+#[test]
+fn thumb_cpsie_cpsid() {
+    check_thumb("cpsie i", "cortex-m4");
+    check_thumb("cpsie f", "cortex-m4");
+    check_thumb("cpsid i", "cortex-m4");
+    check_thumb("cpsid f", "cortex-m4");
+}
+
+// Thumb LDMIA SP! → narrow POP encoding
+#[test]
+fn thumb_ldmia_sp_as_pop() {
+    check_thumb("ldmia sp!, {r0, r3}", "cortex-m4");
+    check_thumb("ldmia sp!, {r0-r7}", "cortex-m4");
+    check_thumb("ldmia sp!, {r4-r11, pc}", "cortex-m4");
+}
+
+// Thumb ADD/SUB SP large immediate (> 508) needs wide encoding
+#[test]
+fn thumb_add_sub_sp_large_imm() {
+    check_thumb("add sp, sp, #512", "cortex-m4");
+    check_thumb("sub sp, sp, #512", "cortex-m4");
+    // Narrow range still works
+    check_thumb("add sp, sp, #4", "cortex-m4");
+    check_thumb("sub sp, sp, #508", "cortex-m4");
+}
+
+// Multi-instruction sequences that exercise label offset accuracy
+#[test]
+fn thumb_sha_style_loop() {
+    check_thumb(
+        "sha_loop:\n\
+         eors r0, r4\n\
+         eors r1, r5\n\
+         eors r2, r6\n\
+         eors r3, r7\n\
+         cmp r0, r1\n\
+         bne sha_loop",
+        "cortex-m4",
+    );
+}
+
+#[test]
+fn thumb_context_switch_pattern() {
+    check_thumb(
+        "mrs r0, psp\n\
+         isb\n\
+         stmdb r0!, {r4-r11, r14}\n\
+         str r0, [r2]\n\
+         stmdb sp!, {r0, r3}\n\
+         mov r0, #4\n\
+         msr basepri, r0\n\
+         dsb\n\
+         isb\n\
+         mov r0, #0\n\
+         msr basepri, r0\n\
+         ldmia sp!, {r0, r3}\n\
+         ldr r1, [r3]\n\
+         ldr r0, [r1]\n\
+         ldmia r0!, {r4-r11, r14}\n\
+         msr psp, r0\n\
+         isb\n\
+         bx r14",
+        "cortex-m4",
+    );
+}
+
+#[test]
+fn a32_sha_compress_pattern() {
+    check_a32(
+        "sha_loop:\n\
+         mov r11, r6, ror #6\n\
+         eor r11, r11, r6, ror #11\n\
+         eor r11, r11, r6, ror #25\n\
+         add r10, r10, r11\n\
+         ldr r11, [r0], #4\n\
+         add r10, r10, r11\n\
+         and r11, r6, r7\n\
+         bic r1, r8, r6\n\
+         eor r11, r11, r1\n\
+         add r10, r10, r11\n\
+         cmp r0, r12\n\
+         blt sha_loop",
+        "cortex-a7",
+    );
+}
+
+#[test]
+fn a32_context_switch_pattern() {
+    check_a32(
+        "push {r1}\n\
+         ldr r0, [r0, #4]\n\
+         ldr r1, [r0]\n\
+         str sp, [r1]\n\
+         ldr r0, [r0]\n\
+         ldr r1, [r0]\n\
+         ldr sp, [r1]\n\
+         pop {r1}\n\
+         str r1, [r0]\n\
+         pop {r0-r12, r14}",
+        "cortex-a7",
+    );
+}

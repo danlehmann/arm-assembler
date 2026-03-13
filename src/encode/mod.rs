@@ -107,6 +107,14 @@ fn pass2(stmts: &[Statement], state: &mut AsmState) -> Result<(), AsmError> {
             Statement::Instruction(inst) => {
                 let offset = state.sections[state.current_section].offset;
                 let bytes = encode_instruction(inst, state.isa, offset, &state.symbols, &state.equs)?;
+                debug_assert_eq!(
+                    bytes.len() as u32,
+                    instruction_size(inst, state.isa),
+                    "instruction size mismatch at line {}: predicted {} bytes, encoded {}",
+                    inst.line,
+                    instruction_size(inst, state.isa),
+                    bytes.len()
+                );
                 let sec = &mut state.sections[state.current_section];
                 sec.data.extend_from_slice(&bytes);
                 sec.offset += bytes.len() as u32;
@@ -145,6 +153,7 @@ fn instruction_size(inst: &Instruction, isa: Isa) -> u32 {
                 | Mnemonic::Ldrht | Mnemonic::Strht
                 | Mnemonic::Ldrsbt | Mnemonic::Ldrsht
                 | Mnemonic::Pld | Mnemonic::Pli
+                | Mnemonic::Dbg | Mnemonic::Rrx
                 // DSP multiply (always 32-bit)
                 | Mnemonic::Smmul | Mnemonic::Smmla | Mnemonic::Smmls
                 | Mnemonic::Smulbb | Mnemonic::Smulbt

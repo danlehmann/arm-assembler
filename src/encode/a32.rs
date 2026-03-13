@@ -28,9 +28,18 @@ struct DpImm {
     s: bool,
     #[bits(21..=24, rw)]
     opcode: u4,
-    // bits 25-27: 001 (prefix 0x0200_0000)
+    #[bit(25, rw)]
+    imm_flag: bool, // 1 for immediate operand
+    #[bits(26..=27, rw)]
+    class: u2,      // 00 for data processing
     #[bits(28..=31, rw)]
     cond: Condition,
+}
+
+impl DpImm {
+    fn new() -> Self {
+        Self::ZERO.with_imm_flag(true)
+    }
 }
 
 /// Data processing - register operand (immediate shift)
@@ -39,7 +48,7 @@ struct DpImm {
 struct DpReg {
     #[bits(0..=3, rw)]
     rm: u4,
-    // bit 4: 0 (implicit)
+    // bit 4: 0 (register shift indicator)
     #[bits(5..=6, rw)]
     shift_type: u2,
     #[bits(7..=11, rw)]
@@ -52,9 +61,47 @@ struct DpReg {
     s: bool,
     #[bits(21..=24, rw)]
     opcode: u4,
-    // bits 25-27: 000 (implicit in initial 0)
+    // bits 25-27: 000 (all zero for register form)
     #[bits(28..=31, rw)]
     cond: Condition,
+}
+
+impl DpReg {
+    fn new() -> Self {
+        Self::ZERO
+    }
+}
+
+/// Data processing - register operand (register-controlled shift)
+/// cond 000 opcode S Rn Rd Rs 0 shift_type 1 Rm
+#[bitfield(u32)]
+struct DpRegShift {
+    #[bits(0..=3, rw)]
+    rm: u4,
+    #[bit(4, rw)]
+    fixed4: bool, // always 1 (register shift indicator)
+    #[bits(5..=6, rw)]
+    shift_type: u2,
+    // bit 7: 0
+    #[bits(8..=11, rw)]
+    rs: u4,
+    #[bits(12..=15, rw)]
+    rd: u4,
+    #[bits(16..=19, rw)]
+    rn: u4,
+    #[bit(20, rw)]
+    s: bool,
+    #[bits(21..=24, rw)]
+    opcode: u4,
+    // bits 25-27: 000
+    #[bits(28..=31, rw)]
+    cond: Condition,
+}
+
+impl DpRegShift {
+    fn new() -> Self {
+        Self::ZERO.with_fixed4(true)
+    }
 }
 
 /// Load/Store immediate offset
@@ -78,9 +125,17 @@ struct LdrStrImm {
     #[bit(24, rw)]
     pre: bool,
     // bit 25: I (0=immediate)
-    // bits 26-27: 01
+    #[bit(26, rw)]
+    class_bit: bool, // 1 for load/store
+    // bit 27: 0
     #[bits(28..=31, rw)]
     cond: Condition,
+}
+
+impl LdrStrImm {
+    fn new() -> Self {
+        Self::ZERO.with_class_bit(true)
+    }
 }
 
 /// Branch (B/BL)
@@ -91,28 +146,200 @@ struct Branch {
     offset: u24,
     #[bit(24, rw)]
     link: bool,
-    // bits 25-27: 101 (prefix 0x0A00_0000)
+    #[bits(25..=27, rw)]
+    class: u3, // 101 for branch
     #[bits(28..=31, rw)]
     cond: Condition,
 }
 
-/// Multiply: MUL Rd, Rm, Rs
-/// cond 000000 S Rd 0000 Rs 1001 Rm
+impl Branch {
+    fn new() -> Self {
+        Self::ZERO.with_class(u3::new(0b101))
+    }
+}
+
+/// Halfword/signed load/store - immediate offset
+/// cond 000P U1WL Rn Rt imm4H 1SH1 imm4L
 #[bitfield(u32)]
-struct Multiply {
+struct HalfWordImm {
     #[bits(0..=3, rw)]
-    rm: u4,
-    // bits 4-7: 1001 (prefix in bits)
-    #[bits(8..=11, rw)]
-    rs: u4,
-    // bits 12-15: 0000
-    #[bits(16..=19, rw)]
-    rd: u4,
-    #[bit(20, rw)]
+    imm4l: u4,
+    #[bit(4, rw)]
+    fixed4: bool,   // always 1
+    #[bit(5, rw)]
+    h: bool,
+    #[bit(6, rw)]
     s: bool,
-    // bits 21-27: 0000000
+    #[bit(7, rw)]
+    fixed7: bool,   // always 1
+    #[bits(8..=11, rw)]
+    imm4h: u4,
+    #[bits(12..=15, rw)]
+    rt: u4,
+    #[bits(16..=19, rw)]
+    rn: u4,
+    #[bit(20, rw)]
+    load: bool,
+    #[bit(21, rw)]
+    writeback: bool,
+    #[bit(22, rw)]
+    imm_flag: bool,  // 1 for immediate offset
+    #[bit(23, rw)]
+    add: bool,
+    #[bit(24, rw)]
+    pre: bool,
+    // bits 25-27: 000
     #[bits(28..=31, rw)]
     cond: Condition,
+}
+
+impl HalfWordImm {
+    fn new() -> Self {
+        Self::ZERO
+            .with_fixed4(true)
+            .with_fixed7(true)
+            .with_imm_flag(true)
+    }
+}
+
+/// Halfword/signed load/store - register offset
+/// cond 000P U0WL Rn Rt 0000 1SH1 Rm
+#[bitfield(u32)]
+struct HalfWordReg {
+    #[bits(0..=3, rw)]
+    rm: u4,
+    #[bit(4, rw)]
+    fixed4: bool,   // always 1
+    #[bit(5, rw)]
+    h: bool,
+    #[bit(6, rw)]
+    s: bool,
+    #[bit(7, rw)]
+    fixed7: bool,   // always 1
+    // bits 8-11: 0000
+    #[bits(12..=15, rw)]
+    rt: u4,
+    #[bits(16..=19, rw)]
+    rn: u4,
+    #[bit(20, rw)]
+    load: bool,
+    #[bit(21, rw)]
+    writeback: bool,
+    // bit 22: 0 (register offset)
+    #[bit(23, rw)]
+    add: bool,
+    #[bit(24, rw)]
+    pre: bool,
+    // bits 25-27: 000
+    #[bits(28..=31, rw)]
+    cond: Condition,
+}
+
+impl HalfWordReg {
+    fn new() -> Self {
+        Self::ZERO
+            .with_fixed4(true)
+            .with_fixed7(true)
+    }
+}
+
+/// Load/store register offset (with optional shift)
+/// cond 011P UBWL Rn Rt shift_imm type 0 Rm
+#[bitfield(u32)]
+struct LdrStrReg {
+    #[bits(0..=3, rw)]
+    rm: u4,
+    // bit 4: 0
+    #[bits(5..=6, rw)]
+    shift_type: u2,
+    #[bits(7..=11, rw)]
+    shift_imm: u5,
+    #[bits(12..=15, rw)]
+    rt: u4,
+    #[bits(16..=19, rw)]
+    rn: u4,
+    #[bit(20, rw)]
+    load: bool,
+    #[bit(21, rw)]
+    writeback: bool,
+    #[bit(22, rw)]
+    byte: bool,
+    #[bit(23, rw)]
+    add: bool,
+    #[bit(24, rw)]
+    pre: bool,
+    #[bits(25..=27, rw)]
+    class: u3, // 011 for register offset load/store
+    #[bits(28..=31, rw)]
+    cond: Condition,
+}
+
+impl LdrStrReg {
+    fn new() -> Self {
+        Self::ZERO.with_class(u3::new(0b011))
+    }
+}
+
+/// Load/store multiple
+/// cond 100P U0WL Rn reglist
+#[bitfield(u32)]
+struct LdmStm {
+    #[bits(0..=15, rw)]
+    reglist: u16,
+    #[bits(16..=19, rw)]
+    rn: u4,
+    #[bit(20, rw)]
+    load: bool,
+    #[bit(21, rw)]
+    writeback: bool,
+    // bit 22: 0
+    #[bit(23, rw)]
+    add: bool,
+    #[bit(24, rw)]
+    pre: bool,
+    #[bits(25..=27, rw)]
+    class: u3, // 100 for load/store multiple
+    #[bits(28..=31, rw)]
+    cond: Condition,
+}
+
+impl LdmStm {
+    fn new() -> Self {
+        Self::ZERO.with_class(u3::new(0b100))
+    }
+}
+
+/// Multiply accumulate: MUL/MLA/MLS/long multiply
+/// cond 0000 opcode S RdHi RdLo Rm 1001 Rn
+#[bitfield(u32)]
+struct MulLong {
+    #[bits(0..=3, rw)]
+    rn: u4,
+    #[bit(4, rw)]
+    fixed4: bool,  // always 1
+    // bits 5-6: 00
+    #[bit(7, rw)]
+    fixed7: bool,  // always 1
+    #[bits(8..=11, rw)]
+    rm: u4,
+    #[bits(12..=15, rw)]
+    rdlo: u4,
+    #[bits(16..=19, rw)]
+    rdhi: u4,
+    #[bit(20, rw)]
+    s: bool,
+    #[bits(21..=27, rw)]
+    op: u7,
+    #[bits(28..=31, rw)]
+    cond: Condition,
+}
+
+impl MulLong {
+    fn new() -> Self {
+        Self::ZERO
+            .with_fixed4(true)
+            .with_fixed7(true)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -182,8 +409,14 @@ pub fn encode_a32(
         | Sasx | Ssax | Uasx | Usax | Qasx | Qsax | Shasx | Shsax
         | Uhasx | Uhsax | Uqasx | Uqsax => encode_parallel_a32(inst),
         Nop => {
-            let c = cond_bits(inst);
-            Ok(emit32(0x0320F000 | (c << 28)))
+            // NOP hint: cond 0011 0010 0000 1111 0000 0000 0000 0000
+            // opcode=1001 (TEQ), S=0, Rn=0, Rd=15
+            let enc = DpImm::new()
+                .with_cond(cond_val(inst))
+                .with_opcode(dp_opcode(Mnemonic::Teq))
+                .with_rn(u4::new(0))
+                .with_rd(u4::new(0xF));
+            Ok(emit32(enc.raw_value()))
         }
         Svc => encode_svc_a32(inst),
         Lsl | Lsr | Asr | Ror | Rrx => encode_shift_a32(inst),
@@ -193,12 +426,13 @@ pub fn encode_a32(
             let line = inst.line;
             match inst.operands.as_slice() {
                 [Operand::Reg(rd), Operand::Reg(rm)] => {
-                    let c = cond_bits(inst);
-                    let s_bit = if inst.set_flags { 1u32 << 20 } else { 0 };
-                    // RSB = opcode 0011, imm=0
-                    let enc: u32 = (c << 28) | 0x0260_0000 | s_bit
-                        | ((*rm as u32) << 16) | ((*rd as u32) << 12);
-                    Ok(emit32(enc))
+                    let enc = DpImm::new()
+                        .with_cond(cond_val(inst))
+                        .with_opcode(dp_opcode(Mnemonic::Rsb))
+                        .with_s(inst.set_flags)
+                        .with_rn(u4::new(*rm))
+                        .with_rd(u4::new(*rd));
+                    Ok(emit32(enc.raw_value()))
                 }
                 _ => Err(AsmError::new(line, "NEG: need Rd, Rm")),
             }
@@ -296,7 +530,7 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         [Operand::Reg(rd), Operand::Imm(imm)] if is_move => {
             let (imm8, rot) = encode_imm12(*imm as u32)
                 .ok_or_else(|| AsmError::new(line, format!("immediate {imm} not representable")))?;
-            let enc = DpImm::new_with_raw_value(0x0200_0000)
+            let enc = DpImm::new()
                 .with_cond(cond_val(inst))
                 .with_opcode(opcode)
                 .with_s(s)
@@ -308,7 +542,7 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         }
         // MOV/MVN Rd, Rm [, shift]
         [Operand::Reg(rd), Operand::Reg(rm)] if is_move => {
-            let enc = DpReg::new_with_raw_value(0)
+            let enc = DpReg::new()
                 .with_cond(cond_val(inst))
                 .with_opcode(opcode)
                 .with_s(s)
@@ -320,7 +554,7 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         [Operand::Reg(rd), Operand::Shifted(rm, st, amount)] if is_move => {
             match amount.as_ref() {
                 Operand::Imm(n) => {
-                    let enc = DpReg::new_with_raw_value(0)
+                    let enc = DpReg::new()
                         .with_cond(cond_val(inst))
                         .with_opcode(opcode)
                         .with_s(s)
@@ -328,18 +562,20 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
                         .with_rd(u4::new(*rd))
                         .with_rm(u4::new(*rm))
                         .with_shift_type(u2::new(st.encoding() as u8))
-                        .with_shift_imm(u5::new(*n as u8));
+                        .with_shift_imm(u5::new((*n as u8) & 0x1F));
                     Ok(emit32(enc.raw_value()))
                 }
                 Operand::Reg(rs) => {
-                    let c = cond_bits(inst);
-                    let op = dp_opcode(inst.mnemonic).value() as u32;
-                    let s_bit = s as u32;
-                    let enc: u32 = (c << 28) | (op << 21) | (s_bit << 20)
-                        | ((*rd as u32) << 12)
-                        | ((*rs as u32) << 8) | ((st.encoding() as u32) << 5)
-                        | (1 << 4) | (*rm as u32);
-                    Ok(emit32(enc))
+                    let enc = DpRegShift::new()
+                        .with_cond(cond_val(inst))
+                        .with_opcode(opcode)
+                        .with_s(s)
+                        .with_rn(u4::new(0))
+                        .with_rd(u4::new(*rd))
+                        .with_rs(u4::new(*rs))
+                        .with_shift_type(u2::new(st.encoding() as u8))
+                        .with_rm(u4::new(*rm));
+                    Ok(emit32(enc.raw_value()))
                 }
                 _ => Err(AsmError::new(line, "expected immediate or register shift amount")),
             }
@@ -348,7 +584,7 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         [Operand::Reg(rn), Operand::Imm(imm)] if is_test => {
             let (imm8, rot) = encode_imm12(*imm as u32)
                 .ok_or_else(|| AsmError::new(line, format!("immediate {imm} not representable")))?;
-            let enc = DpImm::new_with_raw_value(0x0200_0000)
+            let enc = DpImm::new()
                 .with_cond(cond_val(inst))
                 .with_opcode(opcode)
                 .with_s(true)
@@ -360,7 +596,7 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         }
         // CMP/CMN/TST/TEQ Rn, Rm
         [Operand::Reg(rn), Operand::Reg(rm)] if is_test => {
-            let enc = DpReg::new_with_raw_value(0)
+            let enc = DpReg::new()
                 .with_cond(cond_val(inst))
                 .with_opcode(opcode)
                 .with_s(true)
@@ -373,7 +609,7 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         [Operand::Reg(rn), Operand::Shifted(rm, st, amount)] if is_test => {
             match amount.as_ref() {
                 Operand::Imm(n) => {
-                    let enc = DpReg::new_with_raw_value(0)
+                    let enc = DpReg::new()
                         .with_cond(cond_val(inst))
                         .with_opcode(opcode)
                         .with_s(true)
@@ -381,17 +617,19 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
                         .with_rd(u4::new(0))
                         .with_rm(u4::new(*rm))
                         .with_shift_type(u2::new(st.encoding() as u8))
-                        .with_shift_imm(u5::new(*n as u8));
+                        .with_shift_imm(u5::new((*n as u8) & 0x1F));
                     Ok(emit32(enc.raw_value()))
                 }
                 Operand::Reg(rs) => {
-                    let c = cond_bits(inst);
-                    let op = dp_opcode(inst.mnemonic).value() as u32;
-                    let enc: u32 = (c << 28) | (op << 21) | (1 << 20)
-                        | ((*rn as u32) << 16)
-                        | ((*rs as u32) << 8) | ((st.encoding() as u32) << 5)
-                        | (1 << 4) | (*rm as u32);
-                    Ok(emit32(enc))
+                    let enc = DpRegShift::new()
+                        .with_cond(cond_val(inst))
+                        .with_opcode(opcode)
+                        .with_s(true)
+                        .with_rn(u4::new(*rn))
+                        .with_rs(u4::new(*rs))
+                        .with_shift_type(u2::new(st.encoding() as u8))
+                        .with_rm(u4::new(*rm));
+                    Ok(emit32(enc.raw_value()))
                 }
                 _ => Err(AsmError::new(line, "expected imm or reg shift")),
             }
@@ -400,7 +638,7 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Imm(imm)] => {
             let (imm8, rot) = encode_imm12(*imm as u32)
                 .ok_or_else(|| AsmError::new(line, format!("immediate {imm} not representable")))?;
-            let enc = DpImm::new_with_raw_value(0x0200_0000)
+            let enc = DpImm::new()
                 .with_cond(cond_val(inst))
                 .with_opcode(opcode)
                 .with_s(s)
@@ -412,7 +650,7 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         }
         // Normal: ADD/SUB/etc Rd, Rn, Rm
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm)] => {
-            let enc = DpReg::new_with_raw_value(0)
+            let enc = DpReg::new()
                 .with_cond(cond_val(inst))
                 .with_opcode(opcode)
                 .with_s(s)
@@ -425,7 +663,7 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Shifted(rm, st, amount)] => {
             match amount.as_ref() {
                 Operand::Imm(n) => {
-                    let enc = DpReg::new_with_raw_value(0)
+                    let enc = DpReg::new()
                         .with_cond(cond_val(inst))
                         .with_opcode(opcode)
                         .with_s(s)
@@ -433,19 +671,20 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
                         .with_rd(u4::new(*rd))
                         .with_rm(u4::new(*rm))
                         .with_shift_type(u2::new(st.encoding() as u8))
-                        .with_shift_imm(u5::new(*n as u8));
+                        .with_shift_imm(u5::new((*n as u8) & 0x1F));
                     Ok(emit32(enc.raw_value()))
                 }
                 Operand::Reg(rs) => {
-                    // Register-controlled shift: cond 000 opcode S Rn Rd Rs 0 type 1 Rm
-                    let c = cond_bits(inst);
-                    let op = dp_opcode(inst.mnemonic).value() as u32;
-                    let s_bit = s as u32;
-                    let enc: u32 = (c << 28) | (op << 21) | (s_bit << 20)
-                        | ((*rn as u32) << 16) | ((*rd as u32) << 12)
-                        | ((*rs as u32) << 8) | ((st.encoding() as u32) << 5)
-                        | (1 << 4) | (*rm as u32);
-                    Ok(emit32(enc))
+                    let enc = DpRegShift::new()
+                        .with_cond(cond_val(inst))
+                        .with_opcode(opcode)
+                        .with_s(s)
+                        .with_rn(u4::new(*rn))
+                        .with_rd(u4::new(*rd))
+                        .with_rs(u4::new(*rs))
+                        .with_shift_type(u2::new(st.encoding() as u8))
+                        .with_rm(u4::new(*rm));
+                    Ok(emit32(enc.raw_value()))
                 }
                 _ => Err(AsmError::new(line, "expected immediate or register shift amount")),
             }
@@ -454,7 +693,7 @@ fn encode_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         [Operand::Reg(rd), Operand::Imm(imm)] if !is_test && !is_move => {
             let (imm8, rot) = encode_imm12(*imm as u32)
                 .ok_or_else(|| AsmError::new(line, format!("immediate {imm} not representable")))?;
-            let enc = DpImm::new_with_raw_value(0x0200_0000)
+            let enc = DpImm::new()
                 .with_cond(cond_val(inst))
                 .with_opcode(opcode)
                 .with_s(s)
@@ -496,7 +735,7 @@ fn encode_ldr_a32(
                 return Err(AsmError::new(line, "LDR: offset out of range (max 4095)"));
             }
             // bits 26-27: 01 = 0x0400_0000
-            let enc = LdrStrImm::new_with_raw_value(0x0400_0000)
+            let enc = LdrStrImm::new()
                 .with_cond(cond_val(inst))
                 .with_load(true)
                 .with_byte(byte)
@@ -510,30 +749,33 @@ fn encode_ldr_a32(
         }
         // LDR Rt, [Rn, Rm] / [Rn, -Rm] / [Rn], Rm
         [Operand::Reg(rt), Operand::Memory { base, offset: MemOffset::Reg(rm, sub), pre_index, writeback }] => {
-            let c = cond_bits(inst);
-            let p = *pre_index as u32;
-            let u = (!*sub) as u32;
-            let b = byte as u32;
-            let w = if *pre_index { *writeback as u32 } else { 0 };
-            // cond 011P U B W L Rn Rt 00000 000 Rm  (I=1 bit25)
-            let enc: u32 = (c << 28) | (0x3 << 25) | (p << 24) | (u << 23)
-                | (b << 22) | (w << 21) | (1 << 20) // L=1
-                | ((*base as u32) << 16) | ((*rt as u32) << 12) | (*rm as u32);
-            Ok(emit32(enc))
+            let enc = LdrStrReg::new()
+                .with_cond(cond_val(inst))
+                .with_pre(*pre_index)
+                .with_add(!*sub)
+                .with_byte(byte)
+                .with_writeback(*pre_index && *writeback)
+                .with_load(true)
+                .with_rn(u4::new(*base))
+                .with_rt(u4::new(*rt))
+                .with_rm(u4::new(*rm));
+            Ok(emit32(enc.raw_value()))
         }
         // LDR Rt, [Rn, Rm, shift #amt] / [Rn, -Rm, shift #amt]
         [Operand::Reg(rt), Operand::Memory { base, offset: MemOffset::RegShift(rm, st, amt, sub), pre_index, writeback }] => {
-            let c = cond_bits(inst);
-            let p = *pre_index as u32;
-            let u = (!*sub) as u32;
-            let b = byte as u32;
-            let w = if *pre_index { *writeback as u32 } else { 0 };
-            let enc: u32 = (c << 28) | (0x3 << 25) | (p << 24) | (u << 23)
-                | (b << 22) | (w << 21) | (1 << 20)
-                | ((*base as u32) << 16) | ((*rt as u32) << 12)
-                | ((*amt as u32) << 7) | ((st.encoding() as u32) << 5)
-                | (*rm as u32);
-            Ok(emit32(enc))
+            let enc = LdrStrReg::new()
+                .with_cond(cond_val(inst))
+                .with_pre(*pre_index)
+                .with_add(!*sub)
+                .with_byte(byte)
+                .with_writeback(*pre_index && *writeback)
+                .with_load(true)
+                .with_rn(u4::new(*base))
+                .with_rt(u4::new(*rt))
+                .with_shift_imm(u5::new(*amt))
+                .with_shift_type(u2::new(st.encoding() as u8))
+                .with_rm(u4::new(*rm));
+            Ok(emit32(enc.raw_value()))
         }
         // LDR Rt, label (PC-relative)
         [Operand::Reg(rt), Operand::Label(name)] => {
@@ -548,7 +790,7 @@ fn encode_ldr_a32(
             if abs_disp > 4095 {
                 return Err(AsmError::new(line, "LDR PC-relative: offset out of range"));
             }
-            let enc = LdrStrImm::new_with_raw_value(0x0400_0000)
+            let enc = LdrStrImm::new()
                 .with_cond(cond_val(inst))
                 .with_load(true)
                 .with_byte(byte)
@@ -578,7 +820,7 @@ fn encode_str_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
             if abs_imm > 4095 {
                 return Err(AsmError::new(line, "STR: offset out of range (max 4095)"));
             }
-            let enc = LdrStrImm::new_with_raw_value(0x0400_0000)
+            let enc = LdrStrImm::new()
                 .with_cond(cond_val(inst))
                 .with_load(false)
                 .with_byte(byte)
@@ -592,29 +834,33 @@ fn encode_str_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         }
         // STR Rt, [Rn, Rm] / [Rn, -Rm] / [Rn], Rm
         [Operand::Reg(rt), Operand::Memory { base, offset: MemOffset::Reg(rm, sub), pre_index, writeback }] => {
-            let c = cond_bits(inst);
-            let p = *pre_index as u32;
-            let u = (!*sub) as u32;
-            let b = byte as u32;
-            let w = if *pre_index { *writeback as u32 } else { 0 };
-            let enc: u32 = (c << 28) | (0x3 << 25) | (p << 24) | (u << 23)
-                | (b << 22) | (w << 21)
-                | ((*base as u32) << 16) | ((*rt as u32) << 12) | (*rm as u32);
-            Ok(emit32(enc))
+            let enc = LdrStrReg::new()
+                .with_cond(cond_val(inst))
+                .with_pre(*pre_index)
+                .with_add(!*sub)
+                .with_byte(byte)
+                .with_writeback(*pre_index && *writeback)
+                .with_load(false)
+                .with_rn(u4::new(*base))
+                .with_rt(u4::new(*rt))
+                .with_rm(u4::new(*rm));
+            Ok(emit32(enc.raw_value()))
         }
         // STR Rt, [Rn, Rm, shift #amt] / [Rn, -Rm, shift #amt]
         [Operand::Reg(rt), Operand::Memory { base, offset: MemOffset::RegShift(rm, st, amt, sub), pre_index, writeback }] => {
-            let c = cond_bits(inst);
-            let p = *pre_index as u32;
-            let u = (!*sub) as u32;
-            let b = byte as u32;
-            let w = if *pre_index { *writeback as u32 } else { 0 };
-            let enc: u32 = (c << 28) | (0x3 << 25) | (p << 24) | (u << 23)
-                | (b << 22) | (w << 21)
-                | ((*base as u32) << 16) | ((*rt as u32) << 12)
-                | ((*amt as u32) << 7) | ((st.encoding() as u32) << 5)
-                | (*rm as u32);
-            Ok(emit32(enc))
+            let enc = LdrStrReg::new()
+                .with_cond(cond_val(inst))
+                .with_pre(*pre_index)
+                .with_add(!*sub)
+                .with_byte(byte)
+                .with_writeback(*pre_index && *writeback)
+                .with_load(false)
+                .with_rn(u4::new(*base))
+                .with_rt(u4::new(*rt))
+                .with_shift_imm(u5::new(*amt))
+                .with_shift_type(u2::new(st.encoding() as u8))
+                .with_rm(u4::new(*rm));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "invalid operands for STR")),
     }
@@ -650,7 +896,7 @@ fn encode_branch_a32(
     }
 
     let link = inst.mnemonic == Mnemonic::Bl;
-    let enc = Branch::new_with_raw_value(0x0A00_0000)
+    let enc = Branch::new()
         .with_cond(cond_val(inst))
         .with_link(link)
         .with_offset(u24::new(imm as u32 & 0x00FF_FFFF));
@@ -681,11 +927,27 @@ fn encode_push_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::RegList(mask)] => {
-            // PUSH = STMDB SP!, {reglist}
-            // cond 1001 0010 1101 reglist
-            let c = cond_bits(inst);
-            let enc: u32 = (c << 28) | 0x092D_0000 | (*mask as u32);
-            Ok(emit32(enc))
+            if mask.count_ones() == 1 {
+                // Single register: PUSH {Rt} = STR Rt, [SP, #-4]!
+                let rt = mask.trailing_zeros() as u8;
+                let enc = LdrStrImm::new()
+                    .with_cond(cond_val(inst))
+                    .with_pre(true)
+                    .with_writeback(true)
+                    .with_rn(u4::new(13))
+                    .with_rt(u4::new(rt))
+                    .with_offset12(u12::new(4));
+                Ok(emit32(enc.raw_value()))
+            } else {
+                // Multiple registers: PUSH = STMDB SP!, {reglist}
+                let enc = LdmStm::new()
+                    .with_cond(cond_val(inst))
+                    .with_pre(true)
+                    .with_writeback(true)
+                    .with_rn(u4::new(13))
+                    .with_reglist(*mask as u16);
+                Ok(emit32(enc.raw_value()))
+            }
         }
         _ => Err(AsmError::new(line, "PUSH requires register list")),
     }
@@ -695,11 +957,28 @@ fn encode_pop_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::RegList(mask)] => {
-            // POP = LDMIA SP!, {reglist}
-            // cond 1000 1011 1101 reglist
-            let c = cond_bits(inst);
-            let enc: u32 = (c << 28) | 0x08BD_0000 | (*mask as u32);
-            Ok(emit32(enc))
+            if mask.count_ones() == 1 {
+                // Single register: POP {Rt} = LDR Rt, [SP], #4
+                let rt = mask.trailing_zeros() as u8;
+                let enc = LdrStrImm::new()
+                    .with_cond(cond_val(inst))
+                    .with_add(true)
+                    .with_load(true)
+                    .with_rn(u4::new(13))
+                    .with_rt(u4::new(rt))
+                    .with_offset12(u12::new(4));
+                Ok(emit32(enc.raw_value()))
+            } else {
+                // Multiple registers: POP = LDMIA SP!, {reglist}
+                let enc = LdmStm::new()
+                    .with_cond(cond_val(inst))
+                    .with_add(true)
+                    .with_writeback(true)
+                    .with_load(true)
+                    .with_rn(u4::new(13))
+                    .with_reglist(*mask as u16);
+                Ok(emit32(enc.raw_value()))
+            }
         }
         _ => Err(AsmError::new(line, "POP requires register list")),
     }
@@ -713,15 +992,14 @@ fn encode_mul_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::Reg(rd), Operand::Reg(rm), Operand::Reg(rs)] => {
-            let c = cond_bits(inst);
-            let s = if inst.set_flags { 1u32 << 20 } else { 0 };
-            let enc: u32 = (c << 28)
-                | s
-                | ((*rd as u32) << 16)
-                | ((*rs as u32) << 8)
-                | 0x90
-                | (*rm as u32);
-            Ok(emit32(enc))
+            // MUL: op=0000000, rdhi=Rd, rdlo=0, rm=Rs, rn=Rm
+            let enc = MulLong::new()
+                .with_cond(cond_val(inst))
+                .with_s(inst.set_flags)
+                .with_rdhi(u4::new(*rd))
+                .with_rm(u4::new(*rs))
+                .with_rn(u4::new(*rm));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "MUL requires three registers")),
     }
@@ -755,7 +1033,7 @@ fn encode_shift_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     if inst.mnemonic == Mnemonic::Rrx {
         return match inst.operands.as_slice() {
             [Operand::Reg(rd), Operand::Reg(rm)] => {
-                let enc = DpReg::new_with_raw_value(0)
+                let enc = DpReg::new()
                     .with_cond(cond_val(inst))
                     .with_opcode(dp_opcode(Mnemonic::Mov))
                     .with_s(inst.set_flags)
@@ -782,7 +1060,9 @@ fn encode_shift_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         // LSL Rd, Rm, #imm -> MOV Rd, Rm, LSL #imm
         [Operand::Reg(rd), Operand::Reg(rm), Operand::Imm(amount)] => {
             let s = inst.set_flags;
-            let enc = DpReg::new_with_raw_value(0)
+            // ARM encodes LSR #32 and ASR #32 as imm5=0 (special case)
+            let imm5 = (*amount as u8) & 0x1F;
+            let enc = DpReg::new()
                 .with_cond(cond_val(inst))
                 .with_opcode(dp_opcode(Mnemonic::Mov))
                 .with_s(s)
@@ -790,23 +1070,22 @@ fn encode_shift_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
                 .with_rd(u4::new(*rd))
                 .with_rm(u4::new(*rm))
                 .with_shift_type(u2::new(shift_type.encoding() as u8))
-                .with_shift_imm(u5::new(*amount as u8));
+                .with_shift_imm(u5::new(imm5));
             Ok(emit32(enc.raw_value()))
         }
         // LSL Rd, Rm, Rs -> MOV Rd, Rm, LSL Rs  (register shift)
         [Operand::Reg(rd), Operand::Reg(rm), Operand::Reg(rs)] => {
             let s = inst.set_flags;
-            let c = cond_bits(inst);
-            // cond 000 1101 S 0000 Rd Rs 0 shift_type 1 Rm
-            let enc: u32 = (c << 28)
-                | (0x1A << 20)
-                | (if s { 1 << 20 } else { 0 })
-                | ((*rd as u32) << 12)
-                | ((*rs as u32) << 8)
-                | ((shift_type.encoding() as u32) << 5)
-                | (1 << 4)
-                | (*rm as u32);
-            Ok(emit32(enc))
+            let enc = DpRegShift::new()
+                .with_cond(cond_val(inst))
+                .with_opcode(dp_opcode(Mnemonic::Mov))
+                .with_s(s)
+                .with_rn(u4::new(0))
+                .with_rd(u4::new(*rd))
+                .with_rs(u4::new(*rs))
+                .with_shift_type(u2::new(shift_type.encoding() as u8))
+                .with_rm(u4::new(*rm));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "invalid operands for shift")),
     }
@@ -854,45 +1133,54 @@ fn encode_ldr_half_a32(
 
     match inst.operands.as_slice() {
         [Operand::Reg(rt), Operand::Memory { base, offset: MemOffset::Imm(imm), pre_index, writeback }] => {
-            let (u, abs) = if *imm >= 0 { (1u32, *imm as u32) } else { (0, (-*imm) as u32) };
+            let (add, abs) = if *imm >= 0 { (true, *imm as u32) } else { (false, (-*imm) as u32) };
             if abs > 255 { return Err(AsmError::new(line, "halfword offset out of range (max 255)")); }
-            let c = cond_bits(inst);
-            let p = *pre_index as u32;
-            let w = if *pre_index { *writeback as u32 } else { 0 };
-            // cond 000P U1WL Rn Rt imm4H 1SH1 imm4L
-            let enc: u32 = (c << 28) | (p << 24) | (u << 23) | (1 << 22)
-                | (w << 21) | (1 << 20) // L=1
-                | ((*base as u32) << 16) | ((*rt as u32) << 12)
-                | ((abs >> 4) << 8)
-                | (1 << 7) | ((s_bit as u32) << 6) | ((h_bit as u32) << 5) | (1 << 4)
-                | (abs & 0xF);
-            Ok(emit32(enc))
+            let enc = HalfWordImm::new()
+                .with_cond(cond_val(inst))
+                .with_pre(*pre_index)
+                .with_add(add)
+                .with_writeback(*pre_index && *writeback)
+                .with_load(true)
+                .with_rn(u4::new(*base))
+                .with_rt(u4::new(*rt))
+                .with_s(s_bit)
+                .with_h(h_bit)
+                .with_imm4h(u4::new((abs >> 4) as u8))
+                .with_imm4l(u4::new((abs & 0xF) as u8));
+            Ok(emit32(enc.raw_value()))
         }
         [Operand::Reg(rt), Operand::Memory { base, offset: MemOffset::Reg(rm, sub), pre_index, writeback }] => {
-            let c = cond_bits(inst);
-            let p = *pre_index as u32;
-            let u = (!*sub) as u32;
-            let w = if *pre_index { *writeback as u32 } else { 0 };
-            let enc: u32 = (c << 28) | (p << 24) | (u << 23)
-                | (w << 21) | (1 << 20)
-                | ((*base as u32) << 16) | ((*rt as u32) << 12)
-                | (1 << 7) | ((s_bit as u32) << 6) | ((h_bit as u32) << 5) | (1 << 4)
-                | (*rm as u32);
-            Ok(emit32(enc))
+            let enc = HalfWordReg::new()
+                .with_cond(cond_val(inst))
+                .with_pre(*pre_index)
+                .with_add(!*sub)
+                .with_writeback(*pre_index && *writeback)
+                .with_load(true)
+                .with_rn(u4::new(*base))
+                .with_rt(u4::new(*rt))
+                .with_s(s_bit)
+                .with_h(h_bit)
+                .with_rm(u4::new(*rm));
+            Ok(emit32(enc.raw_value()))
         }
         [Operand::Reg(rt), Operand::Label(name)] => {
             let target = resolve_label(name, symbols, equs, line)?;
             let pc = offset + 8;
             let disp = target as i32 - pc as i32;
-            let (u, abs) = if disp >= 0 { (1u32, disp as u32) } else { (0, (-disp) as u32) };
+            let (add, abs) = if disp >= 0 { (true, disp as u32) } else { (false, (-disp) as u32) };
             if abs > 255 { return Err(AsmError::new(line, "halfword PC-relative offset out of range")); }
-            let c = cond_bits(inst);
-            let enc: u32 = (c << 28) | (1 << 24) | (u << 23) | (1 << 22)
-                | (1 << 20) | (15 << 16) | ((*rt as u32) << 12)
-                | ((abs >> 4) << 8)
-                | (1 << 7) | ((s_bit as u32) << 6) | ((h_bit as u32) << 5) | (1 << 4)
-                | (abs & 0xF);
-            Ok(emit32(enc))
+            let enc = HalfWordImm::new()
+                .with_cond(cond_val(inst))
+                .with_pre(true)
+                .with_add(add)
+                .with_load(true)
+                .with_rn(u4::new(15)) // PC
+                .with_rt(u4::new(*rt))
+                .with_s(s_bit)
+                .with_h(h_bit)
+                .with_imm4h(u4::new((abs >> 4) as u8))
+                .with_imm4l(u4::new((abs & 0xF) as u8));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "invalid operands for halfword load")),
     }
@@ -902,30 +1190,35 @@ fn encode_strh_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::Reg(rt), Operand::Memory { base, offset: MemOffset::Imm(imm), pre_index, writeback }] => {
-            let (u, abs) = if *imm >= 0 { (1u32, *imm as u32) } else { (0, (-*imm) as u32) };
+            let (add, abs) = if *imm >= 0 { (true, *imm as u32) } else { (false, (-*imm) as u32) };
             if abs > 255 { return Err(AsmError::new(line, "STRH offset out of range")); }
-            let c = cond_bits(inst);
-            let p = *pre_index as u32;
-            let w = if *pre_index { *writeback as u32 } else { 0 };
-            let enc: u32 = (c << 28) | (p << 24) | (u << 23) | (1 << 22)
-                | (w << 21)
-                | ((*base as u32) << 16) | ((*rt as u32) << 12)
-                | ((abs >> 4) << 8)
-                | 0xB0 // 1011 = 1 S=0 H=1 1
-                | (abs & 0xF);
-            Ok(emit32(enc))
+            let enc = HalfWordImm::new()
+                .with_cond(cond_val(inst))
+                .with_pre(*pre_index)
+                .with_add(add)
+                .with_writeback(*pre_index && *writeback)
+                .with_load(false)
+                .with_rn(u4::new(*base))
+                .with_rt(u4::new(*rt))
+                .with_s(false)
+                .with_h(true)
+                .with_imm4h(u4::new((abs >> 4) as u8))
+                .with_imm4l(u4::new((abs & 0xF) as u8));
+            Ok(emit32(enc.raw_value()))
         }
         [Operand::Reg(rt), Operand::Memory { base, offset: MemOffset::Reg(rm, sub), pre_index, writeback }] => {
-            let c = cond_bits(inst);
-            let p = *pre_index as u32;
-            let u = (!*sub) as u32;
-            let w = if *pre_index { *writeback as u32 } else { 0 };
-            let enc: u32 = (c << 28) | (p << 24) | (u << 23)
-                | (w << 21)
-                | ((*base as u32) << 16) | ((*rt as u32) << 12)
-                | 0xB0
-                | (*rm as u32);
-            Ok(emit32(enc))
+            let enc = HalfWordReg::new()
+                .with_cond(cond_val(inst))
+                .with_pre(*pre_index)
+                .with_add(!*sub)
+                .with_writeback(*pre_index && *writeback)
+                .with_load(false)
+                .with_rn(u4::new(*base))
+                .with_rt(u4::new(*rt))
+                .with_s(false)
+                .with_h(true)
+                .with_rm(u4::new(*rm));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "invalid operands for STRH")),
     }
@@ -939,19 +1232,22 @@ fn encode_ldrd_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::Reg(rt), Operand::Reg(_rt2), Operand::Memory { base, offset: MemOffset::Imm(imm), pre_index, writeback }] => {
-            let (u, abs) = if *imm >= 0 { (1u32, *imm as u32) } else { (0, (-*imm) as u32) };
+            let (add, abs) = if *imm >= 0 { (true, *imm as u32) } else { (false, (-*imm) as u32) };
             if abs > 255 { return Err(AsmError::new(line, "LDRD offset out of range")); }
-            let c = cond_bits(inst);
-            let p = *pre_index as u32;
-            let w = if *pre_index { *writeback as u32 } else { 0 };
-            // cond 000P U1W0 Rn Rt imm4H 1101 imm4L
-            let enc: u32 = (c << 28) | (p << 24) | (u << 23) | (1 << 22)
-                | (w << 21) // L=0 for LDRD (bit20=0 for misc load encoding)
-                | ((*base as u32) << 16) | ((*rt as u32) << 12)
-                | ((abs >> 4) << 8)
-                | 0xD0 // 1101 = 1 1 0 1
-                | (abs & 0xF);
-            Ok(emit32(enc))
+            // LDRD: S=1 H=0 (0xD0 = 1101_0000)
+            let enc = HalfWordImm::new()
+                .with_cond(cond_val(inst))
+                .with_pre(*pre_index)
+                .with_add(add)
+                .with_writeback(*pre_index && *writeback)
+                .with_load(false) // LDRD uses L=0 in misc encoding
+                .with_rn(u4::new(*base))
+                .with_rt(u4::new(*rt))
+                .with_s(true)
+                .with_h(false)
+                .with_imm4h(u4::new((abs >> 4) as u8))
+                .with_imm4l(u4::new((abs & 0xF) as u8));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "LDRD: need Rt, Rt2, [Rn, #imm]")),
     }
@@ -961,19 +1257,22 @@ fn encode_strd_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::Reg(rt), Operand::Reg(_rt2), Operand::Memory { base, offset: MemOffset::Imm(imm), pre_index, writeback }] => {
-            let (u, abs) = if *imm >= 0 { (1u32, *imm as u32) } else { (0, (-*imm) as u32) };
+            let (add, abs) = if *imm >= 0 { (true, *imm as u32) } else { (false, (-*imm) as u32) };
             if abs > 255 { return Err(AsmError::new(line, "STRD offset out of range")); }
-            let c = cond_bits(inst);
-            let p = *pre_index as u32;
-            let w = if *pre_index { *writeback as u32 } else { 0 };
-            // cond 000P U1W0 Rn Rt imm4H 1111 imm4L
-            let enc: u32 = (c << 28) | (p << 24) | (u << 23) | (1 << 22)
-                | (w << 21)
-                | ((*base as u32) << 16) | ((*rt as u32) << 12)
-                | ((abs >> 4) << 8)
-                | 0xF0 // 1111 = 1 1 1 1
-                | (abs & 0xF);
-            Ok(emit32(enc))
+            // STRD: S=1 H=1 (0xF0 = 1111_0000)
+            let enc = HalfWordImm::new()
+                .with_cond(cond_val(inst))
+                .with_pre(*pre_index)
+                .with_add(add)
+                .with_writeback(*pre_index && *writeback)
+                .with_load(false)
+                .with_rn(u4::new(*base))
+                .with_rt(u4::new(*rt))
+                .with_s(true)
+                .with_h(true)
+                .with_imm4h(u4::new((abs >> 4) as u8))
+                .with_imm4l(u4::new((abs & 0xF) as u8));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "STRD: need Rt, Rt2, [Rn, #imm]")),
     }
@@ -986,45 +1285,50 @@ fn encode_strd_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
 fn encode_ldm_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     let (rn, mask) = match inst.operands.as_slice() {
-        [Operand::Reg(rn), Operand::RegList(mask)] => (*rn, *mask as u32),
+        [Operand::Reg(rn), Operand::RegList(mask)] => (*rn, *mask),
         _ => return Err(AsmError::new(line, "LDM: need Rn, {reglist}")),
     };
-    let c = cond_bits(inst);
-    let w = inst.writeback as u32;
     // IA(FD): P=0 U=1, IB(ED): P=1 U=1, DA(FA): P=0 U=0, DB(EA): P=1 U=0
-    let (p, u) = match inst.mnemonic {
-        Mnemonic::Ldm | Mnemonic::Ldmia | Mnemonic::Ldmfd => (0u32, 1u32),
-        Mnemonic::Ldmib | Mnemonic::Ldmed => (1, 1),
-        Mnemonic::Ldmda | Mnemonic::Ldmfa => (0, 0),
-        Mnemonic::Ldmdb | Mnemonic::Ldmea => (1, 0),
+    let (pre, add) = match inst.mnemonic {
+        Mnemonic::Ldm | Mnemonic::Ldmia | Mnemonic::Ldmfd => (false, true),
+        Mnemonic::Ldmib | Mnemonic::Ldmed => (true, true),
+        Mnemonic::Ldmda | Mnemonic::Ldmfa => (false, false),
+        Mnemonic::Ldmdb | Mnemonic::Ldmea => (true, false),
         _ => unreachable!(),
     };
-    // cond 100P U0WL Rn reglist (bits 27-25: 100)
-    let enc: u32 = (c << 28) | (1 << 27) | (p << 24) | (u << 23)
-        | (w << 21) | (1 << 20) // L=1
-        | ((rn as u32) << 16) | mask;
-    Ok(emit32(enc))
+    let enc = LdmStm::new()
+        .with_cond(cond_val(inst))
+        .with_pre(pre)
+        .with_add(add)
+        .with_writeback(inst.writeback)
+        .with_load(true)
+        .with_rn(u4::new(rn))
+        .with_reglist(mask);
+    Ok(emit32(enc.raw_value()))
 }
 
 fn encode_stm_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     let (rn, mask) = match inst.operands.as_slice() {
-        [Operand::Reg(rn), Operand::RegList(mask)] => (*rn, *mask as u32),
+        [Operand::Reg(rn), Operand::RegList(mask)] => (*rn, *mask),
         _ => return Err(AsmError::new(line, "STM: need Rn, {reglist}")),
     };
-    let c = cond_bits(inst);
-    let w = inst.writeback as u32;
-    let (p, u) = match inst.mnemonic {
-        Mnemonic::Stm | Mnemonic::Stmia | Mnemonic::Stmea => (0u32, 1u32),
-        Mnemonic::Stmib | Mnemonic::Stmfa => (1, 1),
-        Mnemonic::Stmda | Mnemonic::Stmed => (0, 0),
-        Mnemonic::Stmdb | Mnemonic::Stmfd => (1, 0),
+    let (pre, add) = match inst.mnemonic {
+        Mnemonic::Stm | Mnemonic::Stmia | Mnemonic::Stmea => (false, true),
+        Mnemonic::Stmib | Mnemonic::Stmfa => (true, true),
+        Mnemonic::Stmda | Mnemonic::Stmed => (false, false),
+        Mnemonic::Stmdb | Mnemonic::Stmfd => (true, false),
         _ => unreachable!(),
     };
-    let enc: u32 = (c << 28) | (1 << 27) | (p << 24) | (u << 23)
-        | (w << 21)
-        | ((rn as u32) << 16) | mask;
-    Ok(emit32(enc))
+    let enc = LdmStm::new()
+        .with_cond(cond_val(inst))
+        .with_pre(pre)
+        .with_add(add)
+        .with_writeback(inst.writeback)
+        .with_load(false)
+        .with_rn(u4::new(rn))
+        .with_reglist(mask);
+    Ok(emit32(enc.raw_value()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1068,13 +1372,16 @@ fn encode_mla_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm), Operand::Reg(ra)] => {
-            let c = cond_bits(inst);
-            let s = if inst.set_flags { 1u32 << 20 } else { 0 };
-            // cond 0000 001S Rd Ra Rm 1001 Rn
-            let enc: u32 = (c << 28) | (1 << 21) | s
-                | ((*rd as u32) << 16) | ((*ra as u32) << 12)
-                | ((*rm as u32) << 8) | 0x90 | (*rn as u32);
-            Ok(emit32(enc))
+            // MLA: op=0000001
+            let enc = MulLong::new()
+                .with_cond(cond_val(inst))
+                .with_op(u7::new(0b0000001))
+                .with_s(inst.set_flags)
+                .with_rdhi(u4::new(*rd))
+                .with_rdlo(u4::new(*ra))
+                .with_rm(u4::new(*rm))
+                .with_rn(u4::new(*rn));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "MLA: need Rd, Rn, Rm, Ra")),
     }
@@ -1084,12 +1391,15 @@ fn encode_mls_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm), Operand::Reg(ra)] => {
-            let c = cond_bits(inst);
-            // cond 0000 0110 Rd Ra Rm 1001 Rn
-            let enc: u32 = (c << 28) | (0x06 << 20)
-                | ((*rd as u32) << 16) | ((*ra as u32) << 12)
-                | ((*rm as u32) << 8) | 0x90 | (*rn as u32);
-            Ok(emit32(enc))
+            // MLS: op=0000011
+            let enc = MulLong::new()
+                .with_cond(cond_val(inst))
+                .with_op(u7::new(0b0000011))
+                .with_rdhi(u4::new(*rd))
+                .with_rdlo(u4::new(*ra))
+                .with_rm(u4::new(*rm))
+                .with_rn(u4::new(*rn));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "MLS: need Rd, Rn, Rm, Ra")),
     }
@@ -1103,19 +1413,22 @@ fn encode_long_mul_a32(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
         [Operand::Reg(rdlo), Operand::Reg(rdhi), Operand::Reg(rn), Operand::Reg(rm)] => {
-            let c = cond_bits(inst);
-            let s = if inst.set_flags { 1u32 << 20 } else { 0 };
             let op = match inst.mnemonic {
-                Mnemonic::Umull => 0x08u32 << 20,
-                Mnemonic::Umlal => 0x0A << 20,
-                Mnemonic::Smull => 0x0C << 20,
-                Mnemonic::Smlal => 0x0E << 20,
+                Mnemonic::Umull => 0b0000100u8,
+                Mnemonic::Umlal => 0b0000101,
+                Mnemonic::Smull => 0b0000110,
+                Mnemonic::Smlal => 0b0000111,
                 _ => unreachable!(),
             };
-            let enc: u32 = (c << 28) | op | s
-                | ((*rdhi as u32) << 16) | ((*rdlo as u32) << 12)
-                | ((*rm as u32) << 8) | 0x90 | (*rn as u32);
-            Ok(emit32(enc))
+            let enc = MulLong::new()
+                .with_cond(cond_val(inst))
+                .with_op(u7::new(op))
+                .with_s(inst.set_flags)
+                .with_rdhi(u4::new(*rdhi))
+                .with_rdlo(u4::new(*rdlo))
+                .with_rm(u4::new(*rm))
+                .with_rn(u4::new(*rn));
+            Ok(emit32(enc.raw_value()))
         }
         _ => Err(AsmError::new(line, "long multiply: need RdLo, RdHi, Rn, Rm")),
     }

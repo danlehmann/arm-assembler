@@ -265,7 +265,7 @@ fn t2_dp_opcode(m: Mnemonic) -> u8 {
         Mnemonic::Adc => 0b1010,
         Mnemonic::Sbc => 0b1011,
         Mnemonic::Sub | Mnemonic::Cmp => 0b1101,
-        Mnemonic::Rsb => 0b1110,
+        Mnemonic::Rsb | Mnemonic::Neg => 0b1110,
         _ => panic!("not a T2 DP opcode: {:?}", m),
     }
 }
@@ -278,8 +278,16 @@ pub fn thumb_instruction_size(inst: &Instruction) -> u32 {
         Bl => 4,
         // LDM/STM always wide in Thumb-2 (16-bit only has PUSH/POP and LDMIA!/STMIA! for low regs)
         Ldm | Ldmia | Ldmfd | Ldmdb | Stm | Stmia | Stmea | Stmdb | Stmfd => {
-            // Narrow LDMIA/STMIA only for low base reg with writeback
             match inst.operands.as_slice() {
+                // LDMIA SP!, {R0-R7, PC} → narrow POP
+                [Operand::Reg(13), Operand::RegList(mask)]
+                    if matches!(inst.mnemonic, Ldm | Ldmia | Ldmfd)
+                        && inst.writeback
+                        && (*mask & 0x7F00) == 0 =>
+                {
+                    2
+                }
+                // Narrow LDMIA/STMIA only for low base reg with writeback
                 [Operand::Reg(rn), Operand::RegList(mask)]
                     if *rn <= 7 && (*mask & 0xFF00) == 0 =>
                 {
@@ -291,9 +299,11 @@ pub fn thumb_instruction_size(inst: &Instruction) -> u32 {
                 _ => 4,
             }
         }
+        // No narrow form at all
+        Rsb | Teq => 4,
         // Check operands for narrow feasibility
-        Mov | Mvn | Add | Adc | Sub | Sbc | Rsb | And | Orr | Eor | Bic
-        | Cmp | Cmn | Tst | Teq => {
+        Mov | Mvn | Add | Adc | Sub | Sbc | And | Orr | Eor | Bic
+        | Cmp | Cmn | Tst => {
             match inst.operands.as_slice() {
                 // High register or large immediate -> wide
                 [Operand::Reg(rd), Operand::Imm(imm)]
@@ -301,18 +311,56 @@ pub fn thumb_instruction_size(inst: &Instruction) -> u32 {
                 {
                     4
                 }
+                // MOV Rd, #imm without S flag (outside IT): narrow sets flags, need wide
+                [Operand::Reg(rd), Operand::Imm(_)]
+                    if matches!(inst.mnemonic, Mov)
+                        && !inst.set_flags && inst.condition.is_none()
+                        && *rd <= 7 =>
+                {
+                    4
+                }
                 [Operand::Reg(rd), Operand::Reg(rn), Operand::Imm(imm)]
                     if *rd > 7 || *rn > 7 || *imm < 0 || *imm > 7 =>
                 {
-                    // Exception: ADD/SUB SP forms
-                    if (*rn == 13 || *rd == 13) && inst.mnemonic == Add {
+                    if matches!(inst.mnemonic, Add | Sub) {
+                        let v = *imm as u32;
+                        if *rd == 13 && *rn == 13 {
+                            // ADD/SUB SP, SP, #imm7*4 (Format 13: 0..508)
+                            if v % 4 == 0 && v <= 508 { 2 } else { 4 }
+                        } else if *rn == 13 && *rd <= 7 && matches!(inst.mnemonic, Add) {
+                            // ADD Rd, SP, #imm8*4 (Format 12: 0..1020)
+                            if v % 4 == 0 && v <= 1020 { 2 } else { 4 }
+                        } else if *rd <= 7 && *rn == *rd && *imm >= 0 && *imm <= 255 {
+                            // Format 3: ADDS/SUBS Rd, #imm8 (Rd == Rn)
+                            2
+                        } else {
+                            4
+                        }
+                    } else if *rd <= 7 && *rn == *rd && *imm >= 0 && *imm <= 255
+                        && matches!(inst.mnemonic, Cmp)
+                    {
+                        // Format 3: CMP Rd, #imm8
                         2
                     } else {
                         4
                     }
                 }
+                // 2-reg form: only MOV, ADD, CMP have hi-reg narrow (Format 5)
+                [Operand::Reg(rd), Operand::Reg(rm)]
+                    if (*rd > 7 || *rm > 7)
+                        && !matches!(inst.mnemonic, Mov | Add | Cmp) =>
+                {
+                    4
+                }
+                // 3-reg form: only ADD/SUB have dedicated 3-reg narrow;
+                // ALU ops (AND, ORR, etc.) need Rd == Rn to collapse to 2-reg narrow
                 [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm)]
                     if *rd > 7 || *rn > 7 || *rm > 7 =>
+                {
+                    4
+                }
+                [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(_)]
+                    if *rd != *rn && !matches!(inst.mnemonic, Add | Sub) =>
                 {
                     4
                 }
@@ -325,7 +373,7 @@ pub fn thumb_instruction_size(inst: &Instruction) -> u32 {
         Ldr | Str | Ldrb | Strb | Ldrh | Strh => {
             match inst.operands.as_slice() {
                 [Operand::Reg(rt), Operand::Memory { base, offset: MemOffset::Imm(imm), .. }] => {
-                    if *rt > 7 || *base > 7 {
+                    if *rt > 7 || (*base > 7 && *base != 13) {
                         return 4;
                     }
                     match inst.mnemonic {
@@ -369,7 +417,25 @@ pub fn thumb_instruction_size(inst: &Instruction) -> u32 {
                 _ => 4,
             }
         }
-        Mla | Umull | Smull => 4,
+        Mla | Mls | Umull | Smull | Umlal | Smlal | Dmb | Dsb | Isb => 4,
+        Push | Pop => {
+            match inst.operands.as_slice() {
+                [Operand::RegList(mask)] if (*mask & 0x1F00) != 0 => 4,
+                _ => 2,
+            }
+        }
+        Rev | Rev16 | Revsh | Sxth | Sxtb | Uxth | Uxtb => {
+            match inst.operands.as_slice() {
+                [Operand::Reg(rd), Operand::Reg(rm)] if *rd > 7 || *rm > 7 => 4,
+                _ => 2,
+            }
+        }
+        Neg => {
+            match inst.operands.as_slice() {
+                [Operand::Reg(rd), Operand::Reg(rm)] if *rd > 7 || *rm > 7 => 4,
+                _ => 2,
+            }
+        }
         _ => 2,
     }
 }
@@ -403,10 +469,10 @@ pub fn encode_thumb(
             [Operand::Reg(_), Operand::Reg(_)] => encode_alu(inst),
             _ => encode_mov(inst),
         },
-        Add | Adc => encode_add(inst, offset, symbols, equs),
-        Sub | Sbc => encode_sub(inst, offset),
+        Add => encode_add(inst, offset, symbols, equs),
+        Sub => encode_sub(inst, offset),
         Cmp | Cmn => encode_cmp(inst),
-        And | Orr | Eor | Bic | Tst | Neg | Mul => encode_alu(inst),
+        And | Orr | Eor | Bic | Adc | Sbc | Tst | Neg | Mul => encode_alu(inst),
         Lsl | Lsr | Asr | Ror => encode_shift(inst),
         Ldr => encode_ldr(inst, offset, symbols, equs),
         Str => encode_str(inst),
@@ -445,7 +511,13 @@ pub fn encode_thumb(
 
     match narrow {
         Ok(bytes) => Ok(bytes),
-        Err(_) => encode_thumb_wide(inst, offset, symbols, equs),
+        Err(e) => {
+            // Instructions with no wide form: propagate error directly
+            if matches!(inst.mnemonic, Cbz | Cbnz | It | Bkpt) {
+                return Err(e);
+            }
+            encode_thumb_wide(inst, offset, symbols, equs)
+        }
     }
 }
 
@@ -483,6 +555,7 @@ fn is_always_t2(m: Mnemonic) -> bool {
         | Sxtab16 | Uxtab16 | Sxtb16 | Uxtb16
         | Cpsie | Cpsid
         | Ldmdb | Stmdb | Stmfd
+        | Dbg | Rrx
     )
 }
 
@@ -496,8 +569,8 @@ fn encode_thumb_wide(
     use Mnemonic::*;
     match inst.mnemonic {
         // Data processing (wide)
-        Mov | Mvn | Add | Adc | Sub | Sbc | Rsb | And | Orr | Orn | Eor | Bic | Cmp | Cmn
-        | Tst | Teq => encode_t2_data_proc(inst),
+        Mov | Mvn | Add | Adc | Sub | Sbc | Rsb | Neg | And | Orr | Orn | Eor | Bic | Cmp
+        | Cmn | Tst | Teq => encode_t2_data_proc(inst),
         // Move wide immediate
         Movw | Movt => encode_t2_movw_movt(inst),
         // Shifts (wide)
@@ -619,8 +692,10 @@ fn imm_u8(val: i64, line: usize) -> Result<u8, AsmError> {
 fn encode_mov(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
-        // MOVS Rd, #imm8 (Rd low)
-        [Operand::Reg(rd), Operand::Imm(imm)] if *rd <= 7 => {
+        // MOVS Rd, #imm8 (Rd low) -- narrow only when S flag set or inside IT block
+        [Operand::Reg(rd), Operand::Imm(imm)]
+            if *rd <= 7 && (inst.set_flags || inst.condition.is_some()) =>
+        {
             let hw = DataImm8::new_with_raw_value(0x2000)
                 .with_op(u2::new(0b00))
                 .with_rd(require_lo(*rd, line, "MOVS")?)
@@ -677,6 +752,15 @@ fn encode_add(
             let hw = AdjustSp::new_with_raw_value(0xB000)
                 .with_sub(false)
                 .with_imm7(u7::new((scaled / 4) as u8));
+            Ok(emit16(hw.raw_value()))
+        }
+        // ADDS Rd, Rn, #imm8 (Format 3) when Rd == Rn -- preferred by GNU as
+        [Operand::Reg(rd), Operand::Reg(rn), Operand::Imm(imm)]
+            if *rd <= 7 && *rd == *rn && *imm >= 0 && *imm <= 255 =>
+        {
+            let hw = DataImm8::new_with_raw_value(0x3000)
+                .with_rd(require_lo(*rd, line, "ADDS")?)
+                .with_imm8(*imm as u8);
             Ok(emit16(hw.raw_value()))
         }
         // ADDS Rd, Rn, #imm3 (Format 2)
@@ -750,6 +834,15 @@ fn encode_sub(inst: &Instruction, _offset: u32) -> Result<Vec<u8>, AsmError> {
                 .with_imm7(u7::new((scaled / 4) as u8));
             Ok(emit16(hw.raw_value()))
         }
+        // SUBS Rd, Rn, #imm8 (Format 3) when Rd == Rn -- preferred by GNU as
+        [Operand::Reg(rd), Operand::Reg(rn), Operand::Imm(imm)]
+            if *rd <= 7 && *rd == *rn && *imm >= 0 && *imm <= 255 =>
+        {
+            let hw = DataImm8::new_with_raw_value(0x3800)
+                .with_rd(require_lo(*rd, line, "SUBS")?)
+                .with_imm8(*imm as u8);
+            Ok(emit16(hw.raw_value()))
+        }
         // SUBS Rd, Rn, #imm3
         [Operand::Reg(rd), Operand::Reg(rn), Operand::Imm(imm)]
             if *rd <= 7 && *rn <= 7 && *imm >= 0 && *imm <= 7 =>
@@ -819,6 +912,8 @@ fn encode_alu(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     let (rd, rm) = match inst.operands.as_slice() {
         [Operand::Reg(rd), Operand::Reg(rm)] => (*rd, *rm),
+        // 3-operand form where Rd == Rn: collapse to 2-reg (AND Rd, Rd, Rm -> ANDS Rd, Rm)
+        [Operand::Reg(rd), Operand::Reg(rn), Operand::Reg(rm)] if *rd == *rn => (*rd, *rm),
         // MUL Rd, Rn, Rd - three-operand form (Rd must match first and third)
         [Operand::Reg(rd), Operand::Reg(rm), Operand::Reg(rd2)]
             if inst.mnemonic == Mnemonic::Mul && *rd == *rd2 =>
@@ -831,6 +926,8 @@ fn encode_alu(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let opcode = match inst.mnemonic {
         Mnemonic::And => 0b0000,
         Mnemonic::Eor => 0b0001,
+        Mnemonic::Adc => 0b0101,
+        Mnemonic::Sbc => 0b0110,
         Mnemonic::Tst => 0b1000,
         Mnemonic::Neg => 0b1001, // RSB Rd, Rm, #0
         Mnemonic::Cmn => 0b1011,
@@ -873,9 +970,11 @@ fn encode_shift(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     match inst.operands.as_slice() {
         // LSL/LSR/ASR Rd, Rm, #imm5 (Format 1)
         [Operand::Reg(rd), Operand::Reg(rm), Operand::Imm(imm)] => {
+            // ARM encodes LSR #32 and ASR #32 as imm5=0
+            let imm5 = (*imm as u8) & 0x1F;
             let hw = ShiftImm::new_with_raw_value(0x0000)
                 .with_op(u2::new(op))
-                .with_imm5(u5::new(*imm as u8))
+                .with_imm5(u5::new(imm5))
                 .with_rm(require_lo(*rm, line, "shift")?)
                 .with_rd(require_lo(*rd, line, "shift")?);
             Ok(emit16(hw.raw_value()))
@@ -1347,6 +1446,9 @@ fn encode_misc_thumb(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         [Operand::Reg(rd), Operand::Reg(rm)] => (*rd, *rm),
         _ => return Err(AsmError::new(line, "expected two registers")),
     };
+    if rd > 7 || rm > 7 {
+        return Err(AsmError::new(line, "narrow encoding requires R0-R7"));
+    }
     let opcode: u16 = match inst.mnemonic {
         Mnemonic::Rev => 0xBA00,
         Mnemonic::Rev16 => 0xBA40,
@@ -1357,7 +1459,7 @@ fn encode_misc_thumb(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         Mnemonic::Uxtb => 0xB2C0,
         _ => return Err(AsmError::new(line, "unsupported misc instruction")),
     };
-    let hw = opcode | ((rm as u16 & 7) << 3) | (rd as u16 & 7);
+    let hw = opcode | ((rm as u16) << 3) | (rd as u16);
     Ok(emit16(hw))
 }
 
@@ -1407,6 +1509,14 @@ fn encode_it(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
 fn encode_ldm_narrow(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
+        // LDMIA SP!, {R0-R7, PC} → narrow POP
+        [Operand::Reg(13), Operand::RegList(mask)]
+            if inst.writeback && (*mask & 0x7F00) == 0 =>
+        {
+            let pc_bit = if (*mask & 0x8000) != 0 { 0x0100u16 } else { 0 };
+            let hw: u16 = 0xBC00 | pc_bit | (*mask as u16 & 0xFF);
+            Ok(emit16(hw))
+        }
         [Operand::Reg(rn), Operand::RegList(mask)] if *rn <= 7 && (*mask & 0xFF00) == 0 => {
             // LDMIA Rn!, {reglist} (narrow: writeback is implicit, Rn not in list means writeback)
             let hw: u16 = 0xC800 | ((*rn as u16) << 8) | (*mask as u16 & 0xFF);
@@ -1444,6 +1554,10 @@ fn encode_t2_data_proc(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let s = inst.set_flags || is_test;
 
     match inst.operands.as_slice() {
+        // NEG Rd, Rm -> RSB Rd, Rm, #0
+        [Operand::Reg(rd), Operand::Reg(rm)] if m == Mnemonic::Neg => {
+            Ok(t2_dp_mod_imm(opcode, s, *rm, *rd, 0))
+        }
         // MOV/MVN Rd, #imm
         [Operand::Reg(rd), Operand::Imm(imm)] if is_move => {
             let imm12 = thumb_expand_imm_encoding(*imm as u32)
@@ -2423,8 +2537,19 @@ fn encode_t2_cps(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
     let line = inst.line;
     let enable = inst.mnemonic == Mnemonic::Cpsie;
     let flags = match inst.operands.as_slice() {
-        [Operand::Imm(f)] => *f as u8,
-        _ => return Err(AsmError::new(line, "CPSIE/CPSID: need flags")),
+        [Operand::Label(s)] => {
+            let mut f = 0u8;
+            for ch in s.to_ascii_lowercase().chars() {
+                match ch {
+                    'a' => f |= 4,
+                    'i' => f |= 2,
+                    'f' => f |= 1,
+                    _ => return Err(AsmError::new(line, format!("CPS: unknown flag '{ch}'"))),
+                }
+            }
+            f
+        }
+        _ => return Err(AsmError::new(line, "CPSIE/CPSID: need flags (a, i, f)")),
     };
     // 16-bit CPS: 10110110011 im AIF
     let im = if enable { 0u16 } else { 1u16 };
@@ -2469,7 +2594,7 @@ fn encode_t2_preload(inst: &Instruction) -> Result<Vec<u8>, AsmError> {
         let hw2: u16 = 0xF000 | (imm as u16 & 0xFFF);
         Ok(emit32_thumb(hw1, hw2))
     } else if imm >= -255 && imm < 0 {
-        let hw1: u16 = (hw1_base & 0xFF0F) | (rn as u16 & 0xF); // clear bit for negative
+        let hw1: u16 = (hw1_base & 0xFF7F) | (rn as u16 & 0xF); // clear U bit for negative
         let hw2: u16 = 0xFC00 | ((-imm) as u16 & 0xFF);
         Ok(emit32_thumb(hw1, hw2))
     } else {
