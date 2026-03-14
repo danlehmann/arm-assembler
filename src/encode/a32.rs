@@ -6,7 +6,7 @@ use bitbybit::bitfield;
 use crate::ast::*;
 use crate::error::AsmError;
 
-use super::{resolve_label, EncodedInst};
+use super::{resolve_expr_u32, EncodedInst};
 
 // ---------------------------------------------------------------------------
 // Bitfield structs for A32 instruction formats
@@ -519,23 +519,25 @@ pub fn encode_a32(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     use Mnemonic::*;
     match inst.mnemonic {
         Mov | Mvn | Add | Adc | Sub | Sbc | Rsb | Rsc | And | Orr | Eor | Bic | Cmp | Cmn | Tst
         | Teq => encode_data_proc(inst),
         Movw | Movt => encode_movw_movt_a32(inst),
-        Ldr | Ldrb => encode_ldr_a32(inst, offset, symbols, equs),
+        Ldr | Ldrb => encode_ldr_a32(inst, offset, symbols, equs, local_labels, section),
         Str | Strb => encode_str_a32(inst),
-        Ldrh | Ldrsh | Ldrsb => encode_ldr_half_a32(inst, offset, symbols, equs),
+        Ldrh | Ldrsh | Ldrsb => encode_ldr_half_a32(inst, offset, symbols, equs, local_labels, section),
         Strh => encode_strh_a32(inst),
         Ldrd => encode_ldrd_a32(inst),
         Strd => encode_strd_a32(inst),
         Ldm | Ldmia | Ldmfd | Ldmib | Ldmed | Ldmda | Ldmfa | Ldmdb | Ldmea => encode_ldm_a32(inst),
         Stm | Stmia | Stmea | Stmib | Stmfa | Stmda | Stmed | Stmdb | Stmfd => encode_stm_a32(inst),
-        B | Bl => encode_branch_a32(inst, offset, symbols, equs),
+        B | Bl => encode_branch_a32(inst, offset, symbols, equs, local_labels, section),
         Bx => encode_bx_a32(inst),
-        Blx => encode_blx_a32(inst, offset, symbols, equs),
+        Blx => encode_blx_a32(inst, offset, symbols, equs, local_labels, section),
         Push => encode_push_a32(inst),
         Pop => encode_pop_a32(inst),
         Mul => encode_mul_a32(inst),
@@ -551,7 +553,7 @@ pub fn encode_a32(
         Ubfx | Sbfx => encode_bfx_a32(inst),
         Sxth | Sxtb | Uxth | Uxtb | Sxtb16 | Uxtb16 => encode_extend_a32(inst),
         Sxtah | Sxtab | Uxtah | Uxtab | Sxtab16 | Uxtab16 => encode_extend_add_a32(inst),
-        Adr => encode_adr_a32(inst, offset, symbols, equs),
+        Adr => encode_adr_a32(inst, offset, symbols, equs, local_labels, section),
         Rev | Rev16 | Revsh => encode_rev_a32(inst),
         Ldrex => encode_ldrex_a32(inst),
         Strex => encode_strex_a32(inst),
@@ -899,6 +901,8 @@ fn encode_ldr_a32(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     let byte = inst.mnemonic == Mnemonic::Ldrb;
@@ -972,8 +976,8 @@ fn encode_ldr_a32(
             Ok(emit32(enc.raw_value()))
         }
         // LDR Rt, label (PC-relative)
-        [Operand::Reg(rt), Operand::Label(name)] => {
-            let target = resolve_label(name, symbols, equs, line)?;
+        [Operand::Reg(rt), Operand::Expr(expr)] => {
+            let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
             let pc = offset + 8; // ARM PC = current + 8
             let disp = target as i32 - pc as i32;
             let (add, abs_disp) = if disp >= 0 {
@@ -1083,14 +1087,16 @@ fn encode_branch_a32(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
-    let label = match inst.operands.as_slice() {
-        [Operand::Label(name)] => name,
+    let expr = match inst.operands.as_slice() {
+        [Operand::Expr(expr)] => expr,
         _ => return Err(AsmError::new(line, "B/BL requires a label")),
     };
 
-    let target = resolve_label(label, symbols, equs, line)?;
+    let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
     let pc = offset + 8; // ARM PC = current + 8
     let disp = target as i32 - pc as i32;
 
@@ -1335,6 +1341,8 @@ fn encode_ldr_half_a32(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     let (s_bit, h_bit) = match inst.mnemonic {
@@ -1395,8 +1403,8 @@ fn encode_ldr_half_a32(
                 .with_rm(*rm);
             Ok(emit32(enc.raw_value()))
         }
-        [Operand::Reg(rt), Operand::Label(name)] => {
-            let target = resolve_label(name, symbols, equs, line)?;
+        [Operand::Reg(rt), Operand::Expr(expr)] => {
+            let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
             let pc = offset + 8;
             let disp = target as i32 - pc as i32;
             let (add, abs) = if disp >= 0 {
@@ -1619,6 +1627,8 @@ fn encode_blx_a32(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
@@ -1629,8 +1639,8 @@ fn encode_blx_a32(
         }
         // BLX label (unconditional, switches to Thumb)
         // 1111 101 H imm24
-        [Operand::Label(name)] => {
-            let target = resolve_label(name, symbols, equs, line)?;
+        [Operand::Expr(expr)] => {
+            let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
             let pc = offset + 8;
             let disp = target as i32 - pc as i32;
             // H bit is bit 1 of the displacement (half-word alignment for Thumb target)
@@ -2561,13 +2571,15 @@ fn encode_adr_a32(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
-    let (rd, label) = match inst.operands.as_slice() {
-        [Operand::Reg(rd), Operand::Label(name)] => (*rd, name),
+    let (rd, expr) = match inst.operands.as_slice() {
+        [Operand::Reg(rd), Operand::Expr(expr)] => (*rd, expr),
         _ => return Err(AsmError::new(line, "ADR: need Rd, label")),
     };
-    let target = resolve_label(label, symbols, equs, line)?;
+    let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
     let pc = offset + 8; // ARM PC = current + 8
     let disp = target as i32 - pc as i32;
     let c = cond_bits(inst);
@@ -2846,7 +2858,7 @@ fn encode_cps_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
 
     // Parse flag operand - it's parsed as an identifier like "if", "i", "f", "a", "aif"
     let flags_val = match inst.operands.as_slice() {
-        [Operand::Label(s)] => {
+        [Operand::Expr(Expr::Symbol(s))] => {
             let mut f = 0u32;
             for ch in s.to_ascii_lowercase().chars() {
                 match ch {
@@ -2873,7 +2885,7 @@ fn encode_cps_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
 fn encode_barrier_a32(inst: &Instruction, base: u32) -> Result<EncodedInst, AsmError> {
     let option = match inst.operands.as_slice() {
         [] => 0xF, // default SY
-        [Operand::Label(s)] => match s.to_ascii_uppercase().as_str() {
+        [Operand::Expr(Expr::Symbol(s))] => match s.to_ascii_uppercase().as_str() {
             "SY" => 0xF,
             "ST" => 0xE,
             "LD" => 0xD,
@@ -3075,7 +3087,7 @@ fn encode_swp_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
 fn encode_setend_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
-        [Operand::Label(s)] => {
+        [Operand::Expr(Expr::Symbol(s))] => {
             let e = match s.to_ascii_uppercase().as_str() {
                 "BE" => 1u32,
                 "LE" => 0,

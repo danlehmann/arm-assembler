@@ -103,6 +103,25 @@ impl<'a> Parser<'a> {
             }
         }
 
+        // Check for numeric (local) label: number followed by colon
+        if let TokenKind::Number(n) = *self.peek_kind() {
+            if let Some(Token {
+                kind: TokenKind::Colon,
+                ..
+            }) = self.tokens.get(self.pos + 1)
+            {
+                let label = n.to_string();
+                let line = self.line();
+                self.advance(); // number
+                self.advance(); // colon
+                stmts.push(Statement::Label(label, line));
+
+                if self.at_end_of_statement() {
+                    return Ok(());
+                }
+            }
+        }
+
         // Check for directive
         if let TokenKind::Ident(ref name) = self.peek_kind().clone() {
             if name.starts_with('.') {
@@ -159,15 +178,15 @@ impl<'a> Parser<'a> {
                 Ok(Directive::Balign(align, fill))
             }
             ".word" | ".long" | ".4byte" => {
-                let vals = self.parse_number_list()?;
+                let vals = self.parse_expr_list()?;
                 Ok(Directive::Word(vals))
             }
             ".short" | ".hword" | ".2byte" => {
-                let vals = self.parse_number_list()?;
+                let vals = self.parse_expr_list()?;
                 Ok(Directive::Short(vals))
             }
             ".byte" => {
-                let vals = self.parse_number_list()?;
+                let vals = self.parse_expr_list()?;
                 Ok(Directive::Byte(vals))
             }
             ".space" | ".skip" => {
@@ -203,7 +222,7 @@ impl<'a> Parser<'a> {
             ".equ" | ".set" => {
                 let name = self.parse_ident()?;
                 self.expect(&TokenKind::Comma)?;
-                let val = self.parse_expr()?;
+                let val = self.parse_full_expr()?;
                 Ok(Directive::Equ(name, val))
             }
             ".type" => {
@@ -386,7 +405,7 @@ impl<'a> Parser<'a> {
 
         // Parse shift amount: #imm or register
         if self.eat(&TokenKind::Hash) {
-            let amount = self.parse_expr()?;
+            let amount = self.parse_number()?;
             Ok(Operand::Shifted(
                 reg,
                 shift_type,
@@ -408,7 +427,7 @@ impl<'a> Parser<'a> {
             TokenKind::LBracket => self.parse_memory(),
             TokenKind::Hash => {
                 self.advance();
-                let val = self.parse_expr()?;
+                let val = self.parse_number()?;
                 Ok(Operand::Imm(val))
             }
             TokenKind::Minus => {
@@ -422,14 +441,16 @@ impl<'a> Parser<'a> {
                     self.advance();
                     Ok(Operand::Reg(reg))
                 } else {
-                    self.advance();
-                    Ok(Operand::Label(s))
+                    let expr = self.parse_full_expr()?;
+                    Ok(Operand::Expr(expr))
                 }
             }
-            TokenKind::Number(n) => {
-                let n = n;
-                self.advance();
-                Ok(Operand::Imm(n))
+            TokenKind::Number(_) => {
+                let expr = self.parse_full_expr()?;
+                match expr {
+                    Expr::Num(n) => Ok(Operand::Imm(n)),
+                    _ => Ok(Operand::Expr(expr)),
+                }
             }
             _ => Err(AsmError::new(
                 self.line(),
@@ -455,7 +476,7 @@ impl<'a> Parser<'a> {
             // Check for post-index: [Rn], #imm or [Rn], Rm{, shift #amt}
             if self.eat(&TokenKind::Comma) {
                 let (offset, neg) = if self.eat(&TokenKind::Hash) {
-                    let val = self.parse_expr()? as i32;
+                    let val = self.parse_number()? as i32;
                     (MemOffset::Imm(val), false)
                 } else {
                     let neg = self.eat(&TokenKind::Minus);
@@ -503,7 +524,7 @@ impl<'a> Parser<'a> {
         self.expect(&TokenKind::Comma)?;
 
         let (offset, neg) = if self.eat(&TokenKind::Hash) {
-            let val = self.parse_expr()? as i32;
+            let val = self.parse_number()? as i32;
             (MemOffset::Imm(val), false)
         } else {
             let neg = self.eat(&TokenKind::Minus);
@@ -595,28 +616,99 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_number(&mut self) -> Result<i64, AsmError> {
-        self.parse_expr()
+        let expr = self.parse_full_expr()?;
+        match expr {
+            Expr::Num(n) => Ok(n),
+            _ => Err(AsmError::new(self.line(), "expected numeric constant")),
+        }
     }
 
-    fn parse_expr(&mut self) -> Result<i64, AsmError> {
-        let neg = if self.eat(&TokenKind::Minus) {
-            true
+    /// Parse a full expression that may contain symbols, arithmetic, and parens.
+    /// Grammar: expr = term (('+' | '-') term)*
+    fn parse_full_expr(&mut self) -> Result<Expr, AsmError> {
+        let mut left = self.parse_term()?;
+        loop {
+            if self.eat(&TokenKind::Plus) {
+                let right = self.parse_term()?;
+                left = Expr::Add(Box::new(left), Box::new(right));
+            } else if self.eat(&TokenKind::Minus) {
+                let right = self.parse_term()?;
+                left = Expr::Sub(Box::new(left), Box::new(right));
+            } else {
+                break;
+            }
+        }
+        Ok(left)
+    }
+
+    /// term = unary (('*' | '/') unary)*
+    fn parse_term(&mut self) -> Result<Expr, AsmError> {
+        let mut left = self.parse_unary()?;
+        loop {
+            if self.eat(&TokenKind::Star) {
+                let right = self.parse_unary()?;
+                left = Expr::Mul(Box::new(left), Box::new(right));
+            } else if self.eat(&TokenKind::Slash) {
+                let right = self.parse_unary()?;
+                left = Expr::Div(Box::new(left), Box::new(right));
+            } else {
+                break;
+            }
+        }
+        Ok(left)
+    }
+
+    /// unary = '-' unary | '+' unary | atom
+    fn parse_unary(&mut self) -> Result<Expr, AsmError> {
+        if self.eat(&TokenKind::Minus) {
+            let inner = self.parse_unary()?;
+            match inner {
+                Expr::Num(n) => Ok(Expr::Num(-n)),
+                _ => Ok(Expr::Sub(Box::new(Expr::Num(0)), Box::new(inner))),
+            }
         } else {
             self.eat(&TokenKind::Plus);
-            false
-        };
+            self.parse_atom()
+        }
+    }
 
-        let val = match self.advance().kind.clone() {
-            TokenKind::Number(n) => n,
-            other => {
-                return Err(AsmError::new(
-                    self.line(),
-                    format!("expected number, got {:?}", other),
-                ))
+    /// atom = Number | Ident | '(' expr ')'
+    fn parse_atom(&mut self) -> Result<Expr, AsmError> {
+        if self.eat(&TokenKind::LParen) {
+            let expr = self.parse_full_expr()?;
+            if !self.eat(&TokenKind::RParen) {
+                return Err(AsmError::new(self.line(), "expected ')'"));
             }
-        };
-
-        Ok(if neg { -val } else { val })
+            return Ok(expr);
+        }
+        match self.peek_kind().clone() {
+            TokenKind::Number(n) => {
+                // Check for local label reference: Number followed by Ident("f"/"b")
+                if let Some(Token {
+                    kind: TokenKind::Ident(ref dir),
+                    ..
+                }) = self.tokens.get(self.pos + 1)
+                {
+                    if (dir == "f" || dir == "b") && n >= 0 {
+                        let is_forward = dir == "f";
+                        self.advance(); // number
+                        self.advance(); // f/b
+                        return Ok(Expr::LocalLabel(n as u32, is_forward));
+                    }
+                }
+                self.advance();
+                Ok(Expr::Num(n))
+            }
+            TokenKind::Ident(ref s) => {
+                let s = s.clone();
+                self.advance();
+                Ok(Expr::Symbol(s))
+            }
+            other => Err(AsmError::new(
+                self.line(),
+                format!("expected number or symbol, got {:?}", other),
+            )),
+        }
     }
 
     fn parse_sysreg(&mut self) -> Result<u8, AsmError> {
@@ -656,10 +748,10 @@ impl<'a> Parser<'a> {
         Ok(code)
     }
 
-    fn parse_number_list(&mut self) -> Result<Vec<i64>, AsmError> {
-        let mut vals = vec![self.parse_expr()?];
+    fn parse_expr_list(&mut self) -> Result<Vec<Expr>, AsmError> {
+        let mut vals = vec![self.parse_full_expr()?];
         while self.eat(&TokenKind::Comma) {
-            vals.push(self.parse_expr()?);
+            vals.push(self.parse_full_expr()?);
         }
         Ok(vals)
     }

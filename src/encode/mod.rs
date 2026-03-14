@@ -35,6 +35,8 @@ struct AsmState {
     symbols: HashMap<String, (usize, u32)>, // (section_index, offset)
     globals: Vec<String>,
     equs: HashMap<String, i64>,
+    /// Local (numeric) labels: number → sorted list of (section_index, offset).
+    local_labels: HashMap<u32, Vec<(usize, u32)>>,
 }
 
 struct SectionBuilder {
@@ -61,6 +63,7 @@ pub fn assemble(stmts: &[Statement], config: &AsmConfig) -> Result<AsmOutput, As
         symbols: HashMap::new(),
         globals: Vec::new(),
         equs: HashMap::new(),
+        local_labels: HashMap::new(),
     };
 
     // Pass 1: collect labels, compute sizes
@@ -104,13 +107,25 @@ fn pass1(stmts: &[Statement], state: &mut AsmState) -> Result<(), AsmError> {
     for stmt in stmts {
         match stmt {
             Statement::Label(name, _line) => {
-                state.symbols.insert(
-                    name.clone(),
-                    (
-                        state.current_section,
-                        state.sections[state.current_section].offset,
-                    ),
-                );
+                if let Ok(n) = name.parse::<u32>() {
+                    // Numeric (local) label — can be defined multiple times
+                    state
+                        .local_labels
+                        .entry(n)
+                        .or_default()
+                        .push((
+                            state.current_section,
+                            state.sections[state.current_section].offset,
+                        ));
+                } else {
+                    state.symbols.insert(
+                        name.clone(),
+                        (
+                            state.current_section,
+                            state.sections[state.current_section].offset,
+                        ),
+                    );
+                }
             }
             Statement::Instruction(inst) => {
                 let size = instruction_size(inst, state.isa);
@@ -130,7 +145,7 @@ fn pass2(stmts: &[Statement], state: &mut AsmState) -> Result<(), AsmError> {
             Statement::Label(_, _) => {}
             Statement::Instruction(inst) => {
                 let offset = state.sections[state.current_section].offset;
-                let enc = encode_instruction(inst, state.isa, offset, &state.symbols, &state.equs)?;
+                let enc = encode_instruction(inst, state.isa, offset, &state.symbols, &state.equs, &state.local_labels, state.current_section)?;
                 debug_assert_eq!(
                     enc.len(),
                     instruction_size(inst, state.isa),
@@ -143,8 +158,8 @@ fn pass2(stmts: &[Statement], state: &mut AsmState) -> Result<(), AsmError> {
                 enc.extend_into(&mut sec.data);
                 sec.offset += enc.len();
             }
-            Statement::Directive(dir, _line) => {
-                handle_directive_pass2(dir, state)?;
+            Statement::Directive(dir, line) => {
+                handle_directive_pass2(dir, *line, state)?;
             }
         }
     }
@@ -281,14 +296,17 @@ fn handle_directive_pass1(dir: &Directive, state: &mut AsmState) -> Result<(), A
             state.isa = Isa::A32;
         }
         Directive::Equ(name, val) => {
-            state.equs.insert(name.clone(), *val);
+            // Try to resolve; in pass1 some symbols may not exist yet, so ignore errors
+            if let Ok(v) = resolve_expr(val, &state.symbols, &state.equs, &state.local_labels, state.current_section, state.sections[state.current_section].offset, 0) {
+                state.equs.insert(name.clone(), v);
+            }
         }
         Directive::SyntaxUnified | Directive::Type(_, _) => {}
     }
     Ok(())
 }
 
-fn handle_directive_pass2(dir: &Directive, state: &mut AsmState) -> Result<(), AsmError> {
+fn handle_directive_pass2(dir: &Directive, line: usize, state: &mut AsmState) -> Result<(), AsmError> {
     match dir {
         Directive::Section(name) => {
             if let Some(idx) = state.sections.iter().position(|s| s.name == *name) {
@@ -315,25 +333,31 @@ fn handle_directive_pass2(dir: &Directive, state: &mut AsmState) -> Result<(), A
             sec.offset += padding;
         }
         Directive::Word(vals) => {
-            let sec = &mut state.sections[state.current_section];
             for v in vals {
-                sec.data.extend_from_slice(&(*v as u32).to_le_bytes());
+                let offset = state.sections[state.current_section].offset;
+                let resolved = resolve_expr(v, &state.symbols, &state.equs, &state.local_labels, state.current_section, offset, line)?;
+                let sec = &mut state.sections[state.current_section];
+                sec.data.extend_from_slice(&(resolved as u32).to_le_bytes());
+                sec.offset += 4;
             }
-            sec.offset += (vals.len() * 4) as u32;
         }
         Directive::Short(vals) => {
-            let sec = &mut state.sections[state.current_section];
             for v in vals {
-                sec.data.extend_from_slice(&(*v as u16).to_le_bytes());
+                let offset = state.sections[state.current_section].offset;
+                let resolved = resolve_expr(v, &state.symbols, &state.equs, &state.local_labels, state.current_section, offset, line)?;
+                let sec = &mut state.sections[state.current_section];
+                sec.data.extend_from_slice(&(resolved as u16).to_le_bytes());
+                sec.offset += 2;
             }
-            sec.offset += (vals.len() * 2) as u32;
         }
         Directive::Byte(vals) => {
-            let sec = &mut state.sections[state.current_section];
             for v in vals {
-                sec.data.push(*v as u8);
+                let offset = state.sections[state.current_section].offset;
+                let resolved = resolve_expr(v, &state.symbols, &state.equs, &state.local_labels, state.current_section, offset, line)?;
+                let sec = &mut state.sections[state.current_section];
+                sec.data.push(resolved as u8);
+                sec.offset += 1;
             }
-            sec.offset += vals.len() as u32;
         }
         Directive::Space(size, fill) => {
             let sec = &mut state.sections[state.current_section];
@@ -360,11 +384,26 @@ fn handle_directive_pass2(dir: &Directive, state: &mut AsmState) -> Result<(), A
             state.isa = Isa::A32;
         }
         Directive::Equ(name, val) => {
-            state.equs.insert(name.clone(), *val);
+            let offset = state.sections[state.current_section].offset;
+            let resolved = resolve_expr(val, &state.symbols, &state.equs, &state.local_labels, state.current_section, offset, line)?;
+            state.equs.insert(name.clone(), resolved);
         }
         Directive::SyntaxUnified | Directive::Type(_, _) | Directive::Global(_) => {}
     }
     Ok(())
+}
+
+/// Convenience: resolve expression to u32 (for label/address contexts).
+pub fn resolve_expr_u32(
+    expr: &Expr,
+    symbols: &HashMap<String, (usize, u32)>,
+    equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
+    offset: u32,
+    line: usize,
+) -> Result<u32, AsmError> {
+    resolve_expr(expr, symbols, equs, local_labels, section, offset, line).map(|v| v as u32)
 }
 
 fn encode_instruction(
@@ -373,14 +412,16 @@ fn encode_instruction(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     match isa {
-        Isa::Thumb => thumb::encode_thumb(inst, offset, symbols, equs),
-        Isa::A32 => a32::encode_a32(inst, offset, symbols, equs),
+        Isa::Thumb => thumb::encode_thumb(inst, offset, symbols, equs, local_labels, section),
+        Isa::A32 => a32::encode_a32(inst, offset, symbols, equs, local_labels, section),
     }
 }
 
-/// Resolve a label operand to its absolute offset.
+/// Resolve a label name to its absolute offset.
 pub fn resolve_label(
     name: &str,
     symbols: &HashMap<String, (usize, u32)>,
@@ -393,5 +434,66 @@ pub fn resolve_label(
         Ok(*val as u32)
     } else {
         Err(AsmError::new(line, format!("undefined symbol: {name}")))
+    }
+}
+
+/// Evaluate an expression to an i64, resolving any symbol references.
+pub fn resolve_expr(
+    expr: &Expr,
+    symbols: &HashMap<String, (usize, u32)>,
+    equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
+    offset: u32,
+    line: usize,
+) -> Result<i64, AsmError> {
+    let r = |e: &Expr| resolve_expr(e, symbols, equs, local_labels, section, offset, line);
+    match expr {
+        Expr::Num(n) => Ok(*n),
+        Expr::Symbol(name) => resolve_label(name, symbols, equs, line).map(|v| v as i64),
+        Expr::LocalLabel(n, forward) => {
+            resolve_local_label(*n, *forward, local_labels, section, offset, line)
+                .map(|v| v as i64)
+        }
+        Expr::Add(a, b) => Ok(r(a)? + r(b)?),
+        Expr::Sub(a, b) => Ok(r(a)? - r(b)?),
+        Expr::Mul(a, b) => Ok(r(a)? * r(b)?),
+        Expr::Div(a, b) => {
+            let divisor = r(b)?;
+            if divisor == 0 {
+                return Err(AsmError::new(line, "division by zero in expression"));
+            }
+            Ok(r(a)? / divisor)
+        }
+    }
+}
+
+/// Resolve a local (numeric) label reference to its absolute offset.
+fn resolve_local_label(
+    num: u32,
+    forward: bool,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
+    offset: u32,
+    line: usize,
+) -> Result<u32, AsmError> {
+    let entries = local_labels
+        .get(&num)
+        .ok_or_else(|| AsmError::new(line, format!("undefined local label: {num}")))?;
+    if forward {
+        // First definition in the same section with offset > current
+        entries
+            .iter()
+            .find(|(sec, off)| *sec == section && *off > offset)
+            .map(|(_, off)| *off)
+            .ok_or_else(|| AsmError::new(line, format!("no forward definition of local label {num}")))
+    } else {
+        // Last definition in the same section with offset <= current
+        entries
+            .iter()
+            .rev()
+            .find(|(sec, off)| *sec == section && *off <= offset)
+            .map(|(_, off)| *off)
+            .ok_or_else(|| AsmError::new(line, format!("no backward definition of local label {num}")))
     }
 }

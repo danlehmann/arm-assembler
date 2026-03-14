@@ -6,7 +6,7 @@ use bitbybit::bitfield;
 use crate::ast::*;
 use crate::error::AsmError;
 
-use super::resolve_label;
+use super::resolve_expr_u32;
 use super::EncodedInst;
 
 // ---------------------------------------------------------------------------
@@ -809,17 +809,19 @@ pub fn encode_thumb(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     use Mnemonic::*;
 
     // Always-wide Thumb-2 instructions dispatch directly
     if is_always_t2(inst.mnemonic) {
-        return encode_thumb_wide(inst, offset, symbols, equs);
+        return encode_thumb_wide(inst, offset, symbols, equs, local_labels, section);
     }
 
     // If .W suffix is set, go directly to wide encoding
     if inst.wide {
-        return encode_thumb_wide(inst, offset, symbols, equs);
+        return encode_thumb_wide(inst, offset, symbols, equs, local_labels, section);
     }
 
     // Try narrow (16-bit) encoding first
@@ -829,12 +831,12 @@ pub fn encode_thumb(
             [Operand::Reg(_), Operand::Reg(_)] => encode_alu(inst),
             _ => encode_mov(inst),
         },
-        Add => encode_add(inst, offset, symbols, equs),
+        Add => encode_add(inst, offset, symbols, equs, local_labels, section),
         Sub => encode_sub(inst, offset),
         Cmp | Cmn => encode_cmp(inst),
         And | Orr | Eor | Bic | Adc | Sbc | Tst | Neg | Mul => encode_alu(inst),
         Lsl | Lsr | Asr | Ror => encode_shift(inst),
-        Ldr => encode_ldr(inst, offset, symbols, equs),
+        Ldr => encode_ldr(inst, offset, symbols, equs, local_labels, section),
         Str => encode_str(inst),
         Ldrb => encode_ldrb(inst),
         Strb => encode_strb(inst),
@@ -842,20 +844,20 @@ pub fn encode_thumb(
         Strh => encode_strh(inst),
         Push => encode_push(inst),
         Pop => encode_pop(inst),
-        B => encode_branch(inst, offset, symbols, equs),
-        Bl => encode_bl(inst, offset, symbols, equs),
+        B => encode_branch(inst, offset, symbols, equs, local_labels, section),
+        Bl => encode_bl(inst, offset, symbols, equs, local_labels, section),
         Bx => encode_bx(inst),
         Blx => encode_blx(inst),
         Nop => Ok(emit16(0xBF00)),
         Svc => encode_svc(inst),
-        Adr => encode_adr(inst, offset, symbols, equs),
+        Adr => encode_adr(inst, offset, symbols, equs, local_labels, section),
         Rev | Rev16 | Revsh | Sxth | Sxtb | Uxth | Uxtb => encode_misc_thumb(inst),
         Wfi => Ok(emit16(0xBF30)),
         Wfe => Ok(emit16(0xBF20)),
         Sev => Ok(emit16(0xBF40)),
         Bkpt => encode_bkpt(inst),
-        Cbz => encode_cbz_cbnz(inst, offset, symbols, equs),
-        Cbnz => encode_cbz_cbnz(inst, offset, symbols, equs),
+        Cbz => encode_cbz_cbnz(inst, offset, symbols, equs, local_labels, section),
+        Cbnz => encode_cbz_cbnz(inst, offset, symbols, equs, local_labels, section),
         It => encode_it(inst),
         Dmb => encode_barrier_thumb(inst, u4::new(0x5)),
         Dsb => encode_barrier_thumb(inst, u4::new(0x4)),
@@ -876,7 +878,7 @@ pub fn encode_thumb(
             if matches!(inst.mnemonic, Cbz | Cbnz | It | Bkpt) {
                 return Err(e);
             }
-            encode_thumb_wide(inst, offset, symbols, equs)
+            encode_thumb_wide(inst, offset, symbols, equs, local_labels, section)
         }
     }
 }
@@ -1019,6 +1021,8 @@ fn encode_thumb_wide(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     use Mnemonic::*;
     match inst.mnemonic {
@@ -1035,17 +1039,17 @@ fn encode_thumb_wide(
         Sdiv | Udiv => encode_t2_div(inst),
         // Load/store (wide)
         Ldr | Str | Ldrb | Strb | Ldrh | Strh | Ldrsb | Ldrsh => {
-            encode_t2_ldr_str(inst, offset, symbols, equs)
+            encode_t2_ldr_str(inst, offset, symbols, equs, local_labels, section)
         }
-        Ldrd | Strd => encode_t2_ldrd_strd(inst, offset, symbols, equs),
+        Ldrd | Strd => encode_t2_ldrd_strd(inst, offset, symbols, equs, local_labels, section),
         // Load/store multiple (wide)
         Ldm | Ldmia | Ldmfd | Ldmdb => encode_t2_ldm(inst),
         Stm | Stmia | Stmea | Stmdb | Stmfd => encode_t2_stm(inst),
         Push => encode_t2_push(inst),
         Pop => encode_t2_pop(inst),
         // Branch (wide)
-        B => encode_t2_branch(inst, offset, symbols, equs),
-        Bl => encode_bl(inst, offset, symbols, equs),
+        B => encode_t2_branch(inst, offset, symbols, equs, local_labels, section),
+        Bl => encode_bl(inst, offset, symbols, equs, local_labels, section),
         // Bit manipulation
         Clz => encode_t2_clz_rbit(inst, 0b1011, 0b1000),
         Rbit => encode_t2_clz_rbit(inst, 0b1001, 0b1010),
@@ -1188,6 +1192,8 @@ fn encode_add(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
@@ -1279,8 +1285,8 @@ fn encode_add(
             Ok(emit16(hw.raw_value()))
         }
         // ADD Rd, PC, #imm (label, Format 12 = ADR)
-        [Operand::Reg(rd), Operand::Label(name)] if rd.value() <= 7 => {
-            let target = resolve_label(name, symbols, equs, line)?;
+        [Operand::Reg(rd), Operand::Expr(expr)] if rd.value() <= 7 => {
+            let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
             let pc = (offset + 4) & !3; // Thumb PC is aligned
             let disp = target.wrapping_sub(pc);
             if disp % 4 != 0 || disp > 1020 {
@@ -1509,6 +1515,8 @@ fn encode_ldr(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
@@ -1568,8 +1576,8 @@ fn encode_ldr(
             Ok(emit16(hw.raw_value()))
         }
         // LDR Rt, label (PC-relative, Format 6)
-        [Operand::Reg(rt), Operand::Label(name)] if rt.value() <= 7 => {
-            let target = resolve_label(name, symbols, equs, line)?;
+        [Operand::Reg(rt), Operand::Expr(expr)] if rt.value() <= 7 => {
+            let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
             let pc = (offset + 4) & !3;
             let disp = target.wrapping_sub(pc);
             if disp % 4 != 0 || disp > 1020 {
@@ -1854,14 +1862,16 @@ fn encode_branch(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
-    let target_label = match inst.operands.as_slice() {
-        [Operand::Label(name)] => name,
+    let expr = match inst.operands.as_slice() {
+        [Operand::Expr(expr)] => expr,
         _ => return Err(AsmError::new(line, "B requires a label operand")),
     };
 
-    let target = resolve_label(target_label, symbols, equs, line)?;
+    let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
     let pc = offset + 4; // Thumb PC = current + 4
 
     if let Some(cond) = inst.condition {
@@ -1907,14 +1917,16 @@ fn encode_bl(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
-    let target_label = match inst.operands.as_slice() {
-        [Operand::Label(name)] => name,
+    let expr = match inst.operands.as_slice() {
+        [Operand::Expr(expr)] => expr,
         _ => return Err(AsmError::new(line, "BL requires a label operand")),
     };
 
-    let target = resolve_label(target_label, symbols, equs, line)?;
+    let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
     let pc = offset + 4;
     let disp = target as i32 - pc as i32;
 
@@ -1997,11 +2009,13 @@ fn encode_adr(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
-        [Operand::Reg(rd), Operand::Label(name)] if rd.value() <= 7 => {
-            let target = resolve_label(name, symbols, equs, line)?;
+        [Operand::Reg(rd), Operand::Expr(expr)] if rd.value() <= 7 => {
+            let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
             let pc = (offset + 4) & !3;
             let disp = target.wrapping_sub(pc);
             if disp % 4 != 0 || disp > 1020 {
@@ -2035,7 +2049,7 @@ fn encode_bkpt(inst: &Instruction) -> Result<EncodedInst, AsmError> {
 fn encode_barrier_thumb(inst: &Instruction, barrier_op: u4) -> Result<EncodedInst, AsmError> {
     let option: u16 = match inst.operands.as_slice() {
         [] => 0xF, // default SY
-        [Operand::Label(s)] => match s.to_ascii_uppercase().as_str() {
+        [Operand::Expr(Expr::Symbol(s))] => match s.to_ascii_uppercase().as_str() {
             "SY" => 0xF,
             "ST" => 0xE,
             "LD" => 0xD,
@@ -2101,16 +2115,18 @@ fn encode_cbz_cbnz(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
-    let (rn, label) = match inst.operands.as_slice() {
-        [Operand::Reg(rn), Operand::Label(name)] => (*rn, name),
+    let (rn, expr) = match inst.operands.as_slice() {
+        [Operand::Reg(rn), Operand::Expr(expr)] => (*rn, expr),
         _ => return Err(AsmError::new(line, "CBZ/CBNZ requires register and label")),
     };
     if rn.value() > 7 {
         return Err(AsmError::new(line, "CBZ/CBNZ: register must be R0-R7"));
     }
-    let target = resolve_label(label, symbols, equs, line)?;
+    let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
     let pc = offset + 4;
     let disp = target.wrapping_sub(pc);
     if disp > 126 || disp % 2 != 0 {
@@ -2526,6 +2542,8 @@ fn encode_t2_ldr_str(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     let m = inst.mnemonic;
@@ -2601,8 +2619,8 @@ fn encode_t2_ldr_str(
             Ok(emit32_thumb(hw1.raw_value(), hw2.raw_value()))
         }
         // LDR Rt, label (PC-relative, wide)
-        [Operand::Reg(rt), Operand::Label(name)] if is_load => {
-            let target = resolve_label(name, symbols, equs, line)?;
+        [Operand::Reg(rt), Operand::Expr(expr)] if is_load => {
+            let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
             let pc = (offset + 4) & !3;
             let disp = target as i32 - pc as i32;
             let (add, abs_disp) = if disp >= 0 {
@@ -2638,6 +2656,8 @@ fn encode_t2_ldrd_strd(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     let load = inst.mnemonic == Mnemonic::Ldrd;
@@ -2676,8 +2696,8 @@ fn encode_t2_ldrd_strd(
             Ok(emit32_thumb(hw1.raw_value(), hw2.raw_value()))
         }
         // LDRD Rt, Rt2, label (PC-relative)
-        [Operand::Reg(rt), Operand::Reg(rt2), Operand::Label(name)] if load => {
-            let target = resolve_label(name, symbols, equs, line)?;
+        [Operand::Reg(rt), Operand::Reg(rt2), Operand::Expr(expr)] if load => {
+            let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
             let pc = (offset + 4) & !3;
             let disp = target as i32 - pc as i32;
             let (add, abs_disp) = if disp >= 0 {
@@ -2787,13 +2807,15 @@ fn encode_t2_branch(
     offset: u32,
     symbols: &HashMap<String, (usize, u32)>,
     equs: &HashMap<String, i64>,
+    local_labels: &HashMap<u32, Vec<(usize, u32)>>,
+    section: usize,
 ) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
-    let target_label = match inst.operands.as_slice() {
-        [Operand::Label(name)] => name,
+    let expr = match inst.operands.as_slice() {
+        [Operand::Expr(expr)] => expr,
         _ => return Err(AsmError::new(line, "B.W requires a label")),
     };
-    let target = resolve_label(target_label, symbols, equs, line)?;
+    let target = resolve_expr_u32(expr, symbols, equs, local_labels, section, offset, line)?;
     let pc = offset + 4;
     let disp = target as i32 - pc as i32;
     if disp % 2 != 0 {
@@ -3473,7 +3495,7 @@ fn encode_t2_cps(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     let enable = inst.mnemonic == Mnemonic::Cpsie;
     let flags = match inst.operands.as_slice() {
-        [Operand::Label(s)] => {
+        [Operand::Expr(Expr::Symbol(s))] => {
             let mut f = 0u8;
             for ch in s.to_ascii_lowercase().chars() {
                 match ch {

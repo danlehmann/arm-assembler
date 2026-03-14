@@ -624,11 +624,25 @@ pub enum MemOffset {
     RegShift(u4, ShiftType, u8, bool),
 }
 
+/// An expression that may reference labels, resolved at encode time.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Num(i64),
+    Symbol(String),
+    /// Local (numeric) label reference: (label_number, is_forward).
+    /// `1f` = LocalLabel(1, true), `1b` = LocalLabel(1, false).
+    LocalLabel(u32, bool),
+    Add(Box<Expr>, Box<Expr>),
+    Sub(Box<Expr>, Box<Expr>),
+    Mul(Box<Expr>, Box<Expr>),
+    Div(Box<Expr>, Box<Expr>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Operand {
     Reg(u4),
     Imm(i64),
-    Label(String),
+    Expr(Expr),
     RegList(u16),
     Memory {
         base: u4,
@@ -657,16 +671,16 @@ pub enum Directive {
     Global(String),
     Align(u32, Option<u8>),
     Balign(u32, Option<u8>),
-    Word(Vec<i64>),
-    Short(Vec<i64>),
-    Byte(Vec<i64>),
+    Word(Vec<Expr>),
+    Short(Vec<Expr>),
+    Byte(Vec<Expr>),
     Space(u32, u8),
     Ascii(String),
     Asciz(String),
     Thumb,
     Arm,
     SyntaxUnified,
-    Equ(String, i64),
+    Equ(String, Expr),
     Type(String, String),
 }
 

@@ -2534,3 +2534,74 @@ fn balign() {
     check_a32(".balign 4\nmov r0, r0", Cpu::CortexA7);
     check_a32(".byte 0xff\n.balign 4, 0xab\nmov r0, r0", Cpu::CortexA7);
 }
+
+// ---------------------------------------------------------------------------
+// Expression tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn expr_label_plus_const() {
+    // ADR with label + offset (used for Thumb interworking: set bit[0])
+    check_a32("adr r0, 1f + 1\n1: nop", Cpu::CortexA7);
+    check_a32("adr r0, 1f + 4\n1: nop", Cpu::CortexA7);
+}
+
+#[test]
+fn expr_label_minus_const() {
+    check_a32("nop\n1: adr r0, 1b - 4", Cpu::CortexA7);
+}
+
+#[test]
+fn expr_label_diff_in_byte() {
+    // .byte with label difference (used for TBB branch tables)
+    check_a32(
+        "1:\nnop\n2:\n.byte (2b - 1b)\n.balign 4",
+        Cpu::CortexA7,
+    );
+}
+
+#[test]
+fn expr_label_diff_div() {
+    // (label - label) / 2 — typical TBB table entry
+    check_a32(
+        "1:\nnop\nnop\n2:\n.byte (2b - 1b) / 2\n.balign 4",
+        Cpu::CortexA7,
+    );
+}
+
+#[test]
+fn expr_word_with_label() {
+    // .word with a label reference
+    check_a32(
+        "1: nop\n.word 1b",
+        Cpu::CortexA7,
+    );
+}
+
+#[test]
+fn expr_word_arithmetic() {
+    // .word with arithmetic on labels
+    check_a32(
+        "1: nop\n2: nop\n.word 2b - 1b",
+        Cpu::CortexA7,
+    );
+}
+
+#[test]
+fn expr_mul() {
+    check_a32(".word 3 * 4", Cpu::CortexA7);
+    check_a32(".byte 5 * 2", Cpu::CortexA7);
+}
+
+#[test]
+fn expr_complex() {
+    // Parenthesized expressions
+    check_a32(".word (2 + 3) * 4", Cpu::CortexA7);
+    check_a32(".byte (10 - 2) / 4", Cpu::CortexA7);
+}
+
+#[test]
+fn expr_branch_label_offset() {
+    // B to label + offset
+    check_a32("b 1f + 4\nnop\n1: nop\nnop", Cpu::CortexA7);
+}
