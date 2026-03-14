@@ -251,6 +251,11 @@ fn handle_directive_pass1(dir: &Directive, state: &mut AsmState) -> Result<(), A
             let padding = (alignment - (sec.offset % alignment)) % alignment;
             sec.offset += padding;
         }
+        Directive::Balign(alignment, _fill) => {
+            let sec = &mut state.sections[state.current_section];
+            let padding = (alignment - (sec.offset % alignment)) % alignment;
+            sec.offset += padding;
+        }
         Directive::Word(vals) => {
             state.sections[state.current_section].offset += (vals.len() * 4) as u32;
         }
@@ -292,6 +297,15 @@ fn handle_directive_pass2(dir: &Directive, state: &mut AsmState) -> Result<(), A
         }
         Directive::Align(power, fill) => {
             let alignment = 1u32 << power;
+            let sec = &mut state.sections[state.current_section];
+            let fill_byte = fill.unwrap_or(0);
+            let padding = (alignment - (sec.offset % alignment)) % alignment;
+            for _ in 0..padding {
+                sec.data.push(fill_byte);
+            }
+            sec.offset += padding;
+        }
+        Directive::Balign(alignment, fill) => {
             let sec = &mut state.sections[state.current_section];
             let fill_byte = fill.unwrap_or(0);
             let padding = (alignment - (sec.offset % alignment)) % alignment;

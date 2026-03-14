@@ -149,6 +149,15 @@ impl<'a> Parser<'a> {
                 };
                 Ok(Directive::Align(align, fill))
             }
+            ".balign" => {
+                let align = self.parse_number()? as u32;
+                let fill = if self.eat(&TokenKind::Comma) {
+                    Some(self.parse_number()? as u8)
+                } else {
+                    None
+                };
+                Ok(Directive::Balign(align, fill))
+            }
             ".word" | ".long" | ".4byte" => {
                 let vals = self.parse_number_list()?;
                 Ok(Directive::Word(vals))

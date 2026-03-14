@@ -2525,3 +2525,12 @@ fn a32_setend() {
     check_a32("setend be", Cpu::CortexA7);
     check_a32("setend le", Cpu::CortexA7);
 }
+
+#[test]
+fn balign() {
+    // .balign takes a byte count, not a power of two
+    check_a32(".byte 0xff\n.balign 4\nmov r0, r0", Cpu::CortexA7);
+    check_thumb(".byte 0xff\n.balign 2\nmovs r0, #0", Cpu::CortexM4);
+    check_a32(".balign 4\nmov r0, r0", Cpu::CortexA7);
+    check_a32(".byte 0xff\n.balign 4, 0xab\nmov r0, r0", Cpu::CortexA7);
+}

@@ -656,6 +656,7 @@ pub enum Directive {
     Section(String),
     Global(String),
     Align(u32, Option<u8>),
+    Balign(u32, Option<u8>),
     Word(Vec<i64>),
     Short(Vec<i64>),
     Byte(Vec<i64>),
