@@ -2664,3 +2664,61 @@ fn isa_switch_thumb_to_arm() {
         Cpu::CortexA7,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Conditional assembly (.if / .else / .endif)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn if_true() {
+    check_a32(".if 1\nmov r0, #1\n.endif", Cpu::CortexA7);
+}
+
+#[test]
+fn if_false() {
+    check_a32(".if 0\nmov r0, #1\n.endif\nnop", Cpu::CortexA7);
+}
+
+#[test]
+fn if_else_true() {
+    check_a32(".if 1\nmov r0, #1\n.else\nmov r0, #2\n.endif", Cpu::CortexA7);
+}
+
+#[test]
+fn if_else_false() {
+    check_a32(".if 0\nmov r0, #1\n.else\nmov r0, #2\n.endif", Cpu::CortexA7);
+}
+
+#[test]
+fn if_nested() {
+    check_a32(
+        ".if 1\n.if 1\nmov r0, #1\n.endif\nmov r1, #2\n.endif",
+        Cpu::CortexA7,
+    );
+}
+
+#[test]
+fn if_nested_false_outer() {
+    // Outer false: nothing emitted
+    check_a32(
+        ".if 0\n.if 1\nmov r0, #1\n.endif\nmov r1, #2\n.endif\nnop",
+        Cpu::CortexA7,
+    );
+}
+
+#[test]
+fn if_nested_false_inner() {
+    // Inner false: only outer instruction emitted
+    check_a32(
+        ".if 1\n.if 0\nmov r0, #1\n.endif\nmov r1, #2\n.endif",
+        Cpu::CortexA7,
+    );
+}
+
+#[test]
+fn if_with_labels() {
+    check_a32(
+        ".if 1\n1: nop\nb 1b\n.endif",
+        Cpu::CortexA7,
+    );
+}

@@ -5,13 +5,28 @@ use crate::error::AsmError;
 use crate::lexer::{Token, TokenKind};
 
 pub fn parse(tokens: &[Token]) -> Result<Vec<Statement>, AsmError> {
-    let mut parser = Parser { tokens, pos: 0 };
+    let mut parser = Parser {
+        tokens,
+        pos: 0,
+        if_stack: Vec::new(),
+    };
     parser.parse_program()
 }
 
 struct Parser<'a> {
     tokens: &'a [Token],
     pos: usize,
+    /// Stack of `.if` condition states: true = emitting, false = skipping.
+    if_stack: Vec<IfState>,
+}
+
+/// State of a single `.if`/`.else`/`.endif` block.
+#[derive(Clone, Copy)]
+struct IfState {
+    /// Whether the `.if` condition was true (the "then" branch should emit).
+    condition: bool,
+    /// Whether we're currently in the `.else` branch.
+    in_else: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -21,6 +36,17 @@ impl<'a> Parser<'a> {
 
     fn peek_kind(&self) -> &TokenKind {
         &self.cur().kind
+    }
+
+    /// Returns true if we should emit code (all `.if` conditions on the stack are active).
+    fn emitting(&self) -> bool {
+        self.if_stack.iter().all(|s| {
+            if s.in_else {
+                !s.condition
+            } else {
+                s.condition
+            }
+        })
     }
 
     fn line(&self) -> usize {
@@ -74,7 +100,57 @@ impl<'a> Parser<'a> {
             if matches!(self.peek_kind(), TokenKind::Eof) {
                 break;
             }
-            self.parse_line(&mut stmts)?;
+
+            // Check for conditional assembly directives before anything else
+            if let TokenKind::Ident(ref name) = self.peek_kind().clone() {
+                match name.as_str() {
+                    ".if" => {
+                        self.advance();
+                        let val = self.parse_number()?;
+                        self.if_stack.push(IfState {
+                            condition: val != 0,
+                            in_else: false,
+                        });
+                        continue;
+                    }
+                    ".else" => {
+                        let line = self.line();
+                        self.advance();
+                        let top = self.if_stack.last_mut().ok_or_else(|| {
+                            AsmError::new(line, ".else without matching .if")
+                        })?;
+                        if top.in_else {
+                            return Err(AsmError::new(line, "duplicate .else"));
+                        }
+                        top.in_else = true;
+                        continue;
+                    }
+                    ".endif" => {
+                        self.advance();
+                        if self.if_stack.pop().is_none() {
+                            return Err(AsmError::new(
+                                self.line(),
+                                ".endif without matching .if",
+                            ));
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+
+            if self.emitting() {
+                self.parse_line(&mut stmts)?;
+            } else {
+                // Skip this line
+                while !self.at_end_of_statement() {
+                    self.advance();
+                }
+            }
+        }
+
+        if !self.if_stack.is_empty() {
+            return Err(AsmError::new(self.line(), "unterminated .if block"));
         }
 
         Ok(stmts)
