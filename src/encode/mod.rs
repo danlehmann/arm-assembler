@@ -301,7 +301,7 @@ fn handle_directive_pass1(dir: &Directive, state: &mut AsmState) -> Result<(), A
                 state.equs.insert(name.clone(), v);
             }
         }
-        Directive::SyntaxUnified | Directive::Type(_, _) => {}
+        Directive::SyntaxUnified | Directive::Type(_, _) | Directive::Fpu(_) => {}
     }
     Ok(())
 }
@@ -388,7 +388,8 @@ fn handle_directive_pass2(dir: &Directive, line: usize, state: &mut AsmState) ->
             let resolved = resolve_expr(val, &state.symbols, &state.equs, &state.local_labels, state.current_section, offset, line)?;
             state.equs.insert(name.clone(), resolved);
         }
-        Directive::SyntaxUnified | Directive::Type(_, _) | Directive::Global(_) => {}
+        Directive::SyntaxUnified | Directive::Type(_, _) | Directive::Global(_)
+        | Directive::Fpu(_) => {}
     }
     Ok(())
 }

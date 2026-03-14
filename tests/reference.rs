@@ -2605,3 +2605,14 @@ fn expr_branch_label_offset() {
     // B to label + offset
     check_a32("b 1f + 4\nnop\n1: nop\nnop", Cpu::CortexA7);
 }
+
+// ---------------------------------------------------------------------------
+// .fpu directive
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fpu_directive() {
+    // .fpu directive should be accepted and not affect instruction encoding
+    check_a32(".fpu vfpv3-d16\nnop", Cpu::CortexA7);
+    check_a32(".fpu vfpv4-d16\nmov r0, #1", Cpu::CortexA7);
+}

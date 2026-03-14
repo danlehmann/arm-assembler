@@ -231,6 +231,20 @@ impl<'a> Parser<'a> {
                 let ty = self.parse_ident()?;
                 Ok(Directive::Type(name, ty))
             }
+            ".fpu" => {
+                // .fpu names can contain hyphens (e.g. vfpv3-d16), so consume all tokens
+                let mut name = String::new();
+                while !self.at_end_of_statement() {
+                    let tok = self.advance();
+                    match &tok.kind {
+                        TokenKind::Ident(s) => name.push_str(s),
+                        TokenKind::Minus => name.push('-'),
+                        TokenKind::Number(n) => name.push_str(&n.to_string()),
+                        _ => break,
+                    }
+                }
+                Ok(Directive::Fpu(name))
+            }
             ".thumb_func" | ".fnstart" | ".fnend" | ".cantunwind" | ".size" | ".ident"
             | ".file" => {
                 // Skip to end of line (ignore these directives)

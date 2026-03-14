@@ -682,6 +682,7 @@ pub enum Directive {
     SyntaxUnified,
     Equ(String, Expr),
     Type(String, String),
+    Fpu(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
