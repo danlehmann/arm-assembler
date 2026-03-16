@@ -1084,6 +1084,11 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// Parse a system register name.
+    ///
+    /// Encoding for M-profile registers: raw SYSm value (0..20).
+    /// Encoding for A-profile CPSR/SPSR: bit 7 set, bit 4 = R (1=SPSR),
+    /// bits 3:0 = field mask (c=1, x=2, s=4, f=8).
     fn parse_sysreg(&mut self) -> Result<u8, AsmError> {
         let name = self.parse_ident()?;
         let upper = name.to_ascii_uppercase();
@@ -1095,7 +1100,13 @@ impl<'a> Parser<'a> {
         } {
             // shouldn't normally happen since _ is part of ident
         }
-        // Handle APSR_nzcvq etc by checking if the ident already contains underscore
+
+        // A-profile CPSR/SPSR with optional field mask suffix
+        if let Some(code) = parse_cpsr_spsr(&full) {
+            return Ok(code);
+        }
+
+        // M-profile system registers
         let code = match full.as_str() {
             "APSR" | "APSR_NZCVQ" => 0,
             "IAPSR" => 1,
@@ -1322,6 +1333,41 @@ fn parse_dreg(s: &str) -> Option<u8> {
         }
     }
     None
+}
+
+/// Parse A-profile CPSR/SPSR with optional field mask suffix.
+/// Returns encoded u8: bit 7 set (A-profile), bit 4 = R (1=SPSR),
+/// bits 3:0 = field mask (c=1, x=2, s=4, f=8).
+fn parse_cpsr_spsr(name: &str) -> Option<u8> {
+    let (base, rest) = if let Some(suffix) = name.strip_prefix("CPSR") {
+        (0x80u8, suffix) // R=0
+    } else if let Some(suffix) = name.strip_prefix("SPSR") {
+        (0x90u8, suffix) // R=1
+    } else {
+        return None;
+    };
+
+    if rest.is_empty() {
+        // Bare CPSR/SPSR — all fields
+        return Some(base | 0x0F);
+    }
+
+    // Must have underscore then field letters: _f, _fs, _cxsf, etc.
+    let fields = rest.strip_prefix('_')?;
+    if fields.is_empty() {
+        return None;
+    }
+    let mut mask = 0u8;
+    for ch in fields.chars() {
+        match ch {
+            'C' => mask |= 1, // control
+            'X' => mask |= 2, // extension
+            'S' => mask |= 4, // status
+            'F' => mask |= 8, // flags
+            _ => return None,
+        }
+    }
+    Some(base | mask)
 }
 
 /// Whether a mnemonic is a VFP instruction (uses FP register operands).

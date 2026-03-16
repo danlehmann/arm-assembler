@@ -464,6 +464,15 @@ fn a32_exclusive() {
 fn a32_mrs_msr() {
     check_a32("mrs r5, APSR", Cpu::CortexA7);
     check_a32("msr APSR_nzcvq, r7", Cpu::CortexA7);
+    // A-profile CPSR/SPSR
+    check_a32("mrs r0, CPSR", Cpu::CortexA7);
+    check_a32("mrs r2, SPSR", Cpu::CortexA7);
+    check_a32("msr CPSR_f, r0", Cpu::CortexA7);
+    check_a32("msr CPSR_c, r3", Cpu::CortexA7);
+    check_a32("msr CPSR_fs, r4", Cpu::CortexA7);
+    check_a32("msr CPSR_cxsf, r5", Cpu::CortexA7);
+    check_a32("msr SPSR_f, r6", Cpu::CortexA7);
+    check_a32("msr SPSR_cxsf, r7", Cpu::CortexA7);
 }
 
 #[test]

@@ -2059,10 +2059,12 @@ fn encode_mrs_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
         _ => return Err(AsmError::new(line, "MRS: need Rd, sysreg")),
     };
     let c = cond_bits(inst);
-    // For CPSR: cond 0001 0000 1111 Rd 0000 0000 0000
-    let enc: u32 = (c << 28) | 0x010F_0000 | ((rd.value() as u32) << 12);
-    // If reading SPSR, set bit 22 — but for M-profile sysm, CPSR is fine
-    let _ = sysm; // sysm mapping is M-profile specific; A32 MRS reads CPSR
+    // cond 0001 0R00 1111 Rd 0000 0000 0000
+    let mut enc: u32 = (c << 28) | 0x010F_0000 | ((rd.value() as u32) << 12);
+    // A-profile CPSR/SPSR: bit 7 set, bit 4 = R (SPSR)
+    if sysm & 0x80 != 0 && sysm & 0x10 != 0 {
+        enc |= 1 << 22; // R=1 → read SPSR
+    }
     Ok(emit32(enc))
 }
 
@@ -2073,11 +2075,18 @@ fn encode_msr_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
         _ => return Err(AsmError::new(line, "MSR: need sysreg, Rn")),
     };
     let c = cond_bits(inst);
-    // MSR CPSR_f, Rn: cond 0001 0010 mask 1111 0000 0000 Rn
-    // APSR_nzcvq maps to CPSR_f (mask=1000 = bit 19)
-    // For simplicity: APSR/APSR_nzcvq → mask = 1000 (flags only = bit 19)
-    let mask: u32 = if sysm == 0 { 0x8 } else { 0xF }; // APSR → flags, other → all
-    let enc: u32 = (c << 28) | 0x0120_F000 | (mask << 16) | (rn.value() as u32);
+    // MSR CPSR_<fields>, Rn: cond 0001 0R10 mask 1111 0000 0000 Rn
+    let (r_bit, mask): (u32, u32) = if sysm & 0x80 != 0 {
+        // A-profile: bit 4 = R, bits 3:0 = field mask
+        let r = if sysm & 0x10 != 0 { 1u32 } else { 0u32 };
+        let m = (sysm & 0x0F) as u32;
+        (r, m)
+    } else {
+        // M-profile: APSR → flags only
+        (0, if sysm == 0 { 0x8 } else { 0xF })
+    };
+    let enc: u32 =
+        (c << 28) | 0x0120_F000 | (r_bit << 22) | (mask << 16) | (rn.value() as u32);
     Ok(emit32(enc))
 }
 
