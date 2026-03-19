@@ -833,6 +833,9 @@ fn thumb2_sat_arith() {
 fn thumb2_packing() {
     check_thumb("pkhbt r4, r7, r9", Cpu::CortexM4);
     check_thumb("pkhbt r5, r8, r3, lsl #4", Cpu::CortexM4);
+    check_thumb("pkhtb r0, r1, r2, asr #16", Cpu::CortexM4);
+    check_thumb("pkhtb r5, r8, r3, asr #32", Cpu::CortexM4);
+    check_thumb("pkhtb r4, r8, r3, asr #32", Cpu::CortexM4);
     check_thumb("sel r6, r10, r4", Cpu::CortexM4);
 }
 
@@ -1555,6 +1558,8 @@ fn a32_pkhbt_pkhtb_sel() {
     check_a32("pkhbt r0, r1, r2", Cpu::CortexA7);
     check_a32("pkhbt r0, r1, r2, lsl #16", Cpu::CortexA7);
     check_a32("pkhtb r0, r1, r2, asr #16", Cpu::CortexA7);
+    check_a32("pkhtb r5, r8, r3, asr #32", Cpu::CortexA7);
+    check_a32("pkhtb r4, r8, r3, asr #32", Cpu::CortexA7);
     check_a32("sel r0, r1, r2", Cpu::CortexA7);
 }
 

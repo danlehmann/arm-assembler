@@ -2201,7 +2201,7 @@ fn encode_pkh_a32(inst: &Instruction) -> Result<EncodedInst, AsmError> {
         | 0x0680_0010
         | ((rn.value() as u32) << 16)
         | ((rd.value() as u32) << 12)
-        | ((sh_amt as u32) << 7)
+        | (((sh_amt as u32) & 0x1F) << 7)
         | (tb << 6)
         | (rm.value() as u32);
     Ok(emit32(enc))
