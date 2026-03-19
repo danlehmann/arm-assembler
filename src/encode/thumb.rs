@@ -611,6 +611,14 @@ pub fn thumb_instruction_size(inst: &Instruction) -> u32 {
                 {
                     2
                 }
+                // STMDB SP!, {R0-R7, LR} → narrow PUSH
+                [Operand::Reg(SP), Operand::RegList(mask)]
+                    if matches!(inst.mnemonic, Stmdb | Stmfd)
+                        && inst.writeback
+                        && (*mask & 0x1F00) == 0 =>
+                {
+                    2
+                }
                 // Narrow LDMIA/STMIA only for low base reg with writeback
                 [Operand::Reg(rn), Operand::RegList(mask)]
                     if rn.value() <= 7 && (*mask & 0xFF00) == 0 =>
@@ -915,7 +923,7 @@ pub fn encode_thumb(
         Dsb => encode_barrier_thumb(inst, u4::new(0x4)),
         Isb => encode_barrier_thumb(inst, u4::new(0x6)),
         Ldm | Ldmia | Ldmfd => encode_ldm_narrow(inst),
-        Stm | Stmia | Stmea => encode_stm_narrow(inst),
+        Stm | Stmia | Stmea | Stmdb | Stmfd => encode_stm_narrow(inst),
         Rsb => Err(AsmError::new(inst.line, "RSB requires wide encoding")),
         _ => Err(AsmError::new(
             inst.line,
@@ -1068,8 +1076,6 @@ fn is_always_t2(m: Mnemonic) -> bool {
             | Vpush | Vpop
             | Vmrs | Vmsr
             | Ldmdb
-            | Stmdb
-            | Stmfd
             | Dbg
             | Rrx
     )
@@ -2337,6 +2343,19 @@ fn encode_ldm_narrow(inst: &Instruction) -> Result<EncodedInst, AsmError> {
 fn encode_stm_narrow(inst: &Instruction) -> Result<EncodedInst, AsmError> {
     let line = inst.line;
     match inst.operands.as_slice() {
+        // STMDB SP!, {R0-R7, LR} → narrow PUSH
+        [Operand::Reg(SP), Operand::RegList(mask)]
+            if matches!(inst.mnemonic, Mnemonic::Stmdb | Mnemonic::Stmfd)
+                && inst.writeback
+                && (*mask & 0x1F00) == 0 =>
+        {
+            let hw = PushPop::ZERO
+                .with_prefix(u4::new(0b1011))
+                .with_fixed(true)
+                .with_extra_reg((*mask & 0x4000) != 0)
+                .with_reglist(*mask as u8);
+            Ok(emit16(hw.raw_value()))
+        }
         [Operand::Reg(rn), Operand::RegList(mask)] if rn.value() <= 7 && (*mask & 0xFF00) == 0 => {
             let hw = NarrowLdmStm::ZERO
                 .with_prefix(u4::new(0b1100))
